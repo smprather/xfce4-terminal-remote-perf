@@ -1,0 +1,12 @@
+Pinned source for the engineering-loadout xfce4-terminal package.
+
+Source: EPEL8 src.rpm xfce4-terminal-1.0.4-1.el8.src.rpm (downloaded via
+build/build-shell: dnf download --source xfce4-terminal). The exact SRPM is
+kept here alongside the extracted upstream tarball and the EL8 spec file.
+
+Upstream tree: xfce4-terminal-1.0.4/ (xfce4-terminal-1.0.4.tar.bz2).
+EL8 build recipe: xfce4-terminal.spec (patch list, BuildRequires, NVR pin).
+
+This is a checkout of the pinned code, not a git clone. The repo build script
+currently repacks the EPEL binary; a source-patch workflow would build from
+this tree in build/build-shell.

@@ -1,0 +1,12 @@
+# Upstream tarballs and SRPMs are pinned by sha256 in SHA256SUMS, not committed.
+*.src.rpm
+*.tar.bz2
+*.tar.xz
+*.tar.gz
+
+# Build outputs
+/_build/
+/build-out/
+
+# Raw harness output (summaries under results/summary/ are committed after scrubbing)
+/results/raw/
