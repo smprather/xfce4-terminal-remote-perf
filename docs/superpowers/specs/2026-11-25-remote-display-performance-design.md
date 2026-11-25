@@ -1,7 +1,7 @@
 # xfce4-terminal remote-display performance — design
 
 Date: 2026-11-25
-Status: draft, awaiting approval
+Status: approved 2026-11-25
 Working tree: this repository (github.com/smprather/xfce4-terminal-remote-perf; started from the
 EPEL8 1.0.4 source drop, see `README.loadout`)
 Delivery vehicle (later): the engineering-loadout repo (github.com/smprather/engineering-loadout;
