@@ -329,13 +329,14 @@ def _stat(pid):
 
 def term_cpu_s():
     """CPU seconds of the nearest xfce4-terminal ancestor, or None (e.g. inside tmux)."""
+    from xtrp.metrics import proc_cpu_s
     pid = os.getpid()
     while pid > 1:
         st = _stat(pid)
         if st is None:
             return None
         if st[0].startswith("xfce4-termina"):
-            return st[2] / float(os.sysconf("SC_CLK_TCK"))
+            return proc_cpu_s(pid)
         pid = st[1]
     return None
 

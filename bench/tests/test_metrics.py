@@ -26,6 +26,19 @@ class SummarizeTest(unittest.TestCase):
         self.assertGreater(proc_cpu_s(os.getpid()) - before, 0.1)
 
 
+class CpuResolutionTest(unittest.TestCase):
+
+    def test_proc_cpu_s_has_sub_tick_resolution(self):
+        # /proc/<pid>/stat counts 10 ms ticks; a ~3 ms burst must still register
+        before = proc_cpu_s(os.getpid())
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 0.003:
+            pass
+        delta = proc_cpu_s(os.getpid()) - before
+        self.assertGreater(delta, 0.0)
+        self.assertLess(delta, 0.009)
+
+
 class DamageWatchTest(XvfbFixture):
 
     def test_drain_timeout_is_flagged_not_hung(self):

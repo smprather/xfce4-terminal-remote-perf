@@ -10,7 +10,9 @@ CPU-only, 2D techniques; no GPU.
 
 ## Status
 
-Design stage. See
+Plan 1 (measurement harness and baselines) is implemented; see
+[`docs/superpowers/plans/2026-11-25-plan-1-measurement-harness.md`](docs/superpowers/plans/2026-11-25-plan-1-measurement-harness.md).
+Baseline numbers are in [`results/summary/`](results/summary/). The design is
 [`docs/superpowers/specs/2026-11-25-remote-display-performance-design.md`](docs/superpowers/specs/2026-11-25-remote-display-performance-design.md).
 
 Plan in brief:
@@ -24,13 +26,45 @@ Plan in brief:
 4. xfce4-terminal 1.0.4 built from source against it. The app's behaviour and preferences
    are unchanged.
 
+## Running the harness (`xtrp`)
+
+Three platforms:
+
+- `el8`: the primary platform. Every number that decides anything comes from here.
+- `el9`: forward compatibility.
+- `host`: the CachyOS dev box. Its numbers are informational.
+
+```sh
+bench/container bench/selftest-image          # el8 bench image (AlmaLinux 8.10); --el 9 for EL9
+bench/selftest-host                           # host prerequisites; prints the pacman line if any are missing
+bench/test-all                                # unit + integration tests on el8, el9 and the host
+
+# measure: presets smoke | quick | full | rtt-sweep; builds come from bench/builds.json
+bench/container python3 -m xtrp run --preset quick --build baseline --out results/raw/q1
+bench/container python3 -m xtrp report results/raw/q1 results/raw/q2    # exit 1 on a regression
+PYTHONPATH=bench python3 -m xtrp run --preset smoke --build baseline --out results/raw/host-smoke   # on the host
+```
+
+The rules that keep the harness safe on the host:
+
+- Every child gets an environment built from scratch: no Wayland, no session D-Bus, and a private
+  `HOME` and `XDG_RUNTIME_DIR`.
+- Terminals run under their own `dbus-run-session`.
+- tmux only ever runs on private `-L xtrp-*` sockets with a per-run `TMUX_TMPDIR`.
+- Processes are stopped by the pid or process group the harness started, never by name.
+
+To measure a real VM, see [`docs/LIVE.md`](docs/LIVE.md). Build its bundle with
+`bench/container bench/make-live-bundle`.
+
 ## Layout
 
 | Path | What |
 |---|---|
 | `xfce4-terminal-1.0.4/` | Upstream xfce4-terminal 1.0.4 (pristine import, then our patches) |
 | `xfce4-terminal.spec`, `SHA256SUMS`, `README.loadout` | EPEL8 packaging metadata and pins for the source drop |
-| `docs/` | Design and plans |
+| `bench/` | The `xtrp` harness: images, C helpers (`xlat`, `testwin`), Python package, tests |
+| `results/summary/` | Scrubbed baseline and comparison summaries (raw runs stay in `results/raw/`, untracked) |
+| `docs/` | Design, plans, and `LIVE.md` (running xtrp on a real VM) |
 
 ## Licensing
 

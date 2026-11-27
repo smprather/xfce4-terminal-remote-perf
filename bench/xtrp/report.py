@@ -14,14 +14,18 @@ from xtrp.metrics import summarize
 KEY_FIELDS = ("display_kind", "wm", "rtt_ms", "vnc_encoding", "size", "font", "variant", "workload")
 
 # +1 higher is better, -1 lower is better, 0 informational (never flagged).
+# Gated metrics are outcomes. Their components (elapsed_s + drain_s = total_s) and structure
+# counters (how the encoder split frames into rects/updates, how many damage events) are
+# informational: they move with timing phase from run to run while the outcome does not.
 METRIC_DIRECTION = {m: -1 for m in (
-    "startup_ms", "term_cpu_s", "xserver_cpu_s", "damage_events", "damage_area_px", "latency_ms",
-    "e2e_latency_ms", "elapsed_s", "drain_s", "vnc_bytes", "vnc_updates", "vnc_rects", "x11_c2s_bytes",
-    "x11_s2c_bytes", "x11_replies", "x11_requests", "x11_image_bytes", "startup_x11_replies")}
+    "startup_ms", "term_cpu_s", "xserver_cpu_s", "damage_area_px", "latency_ms", "e2e_latency_ms",
+    "total_s", "vnc_bytes", "x11_c2s_bytes", "x11_s2c_bytes", "x11_replies", "x11_requests",
+    "x11_image_bytes", "startup_x11_replies")}
 METRIC_DIRECTION.update({
     "throughput_mb_s": 1,
     "frames": 1,                 # fullscreen-redraw frames written in its fixed time: more = kept up
     "vnc_copyrect_area": 0,      # more CopyRect is the goal of scroll-by-copy, not a regression
+    "elapsed_s": 0, "drain_s": 0, "vnc_rects": 0, "vnc_updates": 0, "damage_events": 0,
 })
 
 

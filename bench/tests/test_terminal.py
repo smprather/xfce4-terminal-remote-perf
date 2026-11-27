@@ -31,6 +31,11 @@ class BuildRegistryTest(unittest.TestCase):
         self.assertIsInstance(b, Build)
         self.assertEqual((b.name, b.exec_path, b.env), ("baseline", "/usr/bin/xfce4-terminal", {}))
 
+    def test_noise_twin_is_the_same_binary(self):
+        builds = load_builds()
+        self.assertEqual(builds["baseline-twin"].exec_path, builds["baseline"].exec_path)
+        self.assertEqual(builds["baseline-twin"].env, builds["baseline"].env)
+
     def test_sizes_and_fonts(self):
         self.assertEqual(SIZES, {"small": "120x40", "large": "236x62"})
         self.assertEqual(FONTS["caskaydia"], "CaskaydiaCove Nerd Font Mono 12")

@@ -85,6 +85,13 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(row(rows, "vnc_copyrect_area")["regression"])
         self.assertTrue(row(rows, "frames")["regression"])
 
+    def test_components_and_structure_counters_are_informational(self):
+        # gated: outcomes; informational: their parts (drain/elapsed) and encoder/frame structure counts
+        for m in ("drain_s", "elapsed_s", "vnc_rects", "vnc_updates", "damage_events"):
+            self.assertEqual(METRIC_DIRECTION[m], 0, m)
+        for m in ("total_s", "latency_ms", "vnc_bytes", "damage_area_px", "term_cpu_s"):
+            self.assertEqual(METRIC_DIRECTION[m], -1, m)
+
     def test_unknown_metric_is_informational(self):
         r = row(compare([rec("b", {"made_up": 1.0})], [rec("c", {"made_up": 100.0})]), "made_up")
         self.assertFalse(r["regression"])
@@ -146,6 +153,15 @@ class CliTest(unittest.TestCase):
                            stderr=subprocess.PIPE, timeout=60)
         r.stdout, r.stderr = r.stdout.decode("utf-8"), r.stderr.decode("utf-8")
         return r
+
+    def test_build_filters_compare_interleaved_runs_from_one_directory(self):
+        d = self.write("mixed", [rec("baseline", {"latency_ms": [10.0]}), rec("cand", {"latency_ms": [13.0]})])
+        r = self.run_cli(d, d, "--base-build", "baseline", "--cand-build", "cand")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("base: 1 records", r.stdout)
+        r = self.run_cli(d, d, "--base-build", "baseline", "--cand-build", "nope")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no records for build nope", r.stderr)
 
     def test_markdown_prints_under_the_c_locale(self):
         base = self.write("b", [rec("b", {"latency_ms": [10.0]})])

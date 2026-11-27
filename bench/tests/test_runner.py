@@ -88,6 +88,7 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(all(v is not None and 0 < v < 1000 for v in echo["metrics"]["latency_ms"]))
         bulk = [r for r in recs if r["key"]["workload"] == "bulk-ascii"][0]
         self.assertGreater(bulk["metrics"]["throughput_mb_s"], 0)
+        self.assertAlmostEqual(bulk["metrics"]["total_s"], bulk["metrics"]["elapsed_s"] + bulk["metrics"]["drain_s"])
         self.assertFalse(bulk["flags"]["errors"])
         for r in recs:
             self.assertEqual(r["schema"], 1)

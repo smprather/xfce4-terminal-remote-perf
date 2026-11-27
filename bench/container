@@ -39,5 +39,5 @@ fi
 exec docker run --rm --init --network "$net" $tty \
     -v "$root:/work" -w /work \
     --user "$(id -u):$(id -g)" \
-    -e HOME=/tmp/xtrp-home -e USER=xtrp -e LOGNAME=xtrp \
+    -e HOME=/tmp/xtrp-home -e USER=xtrp -e LOGNAME=xtrp -e PYTHONPATH=/work/bench \
     "$image" "$@"

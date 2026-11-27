@@ -2,8 +2,9 @@
 
 X11StreamParser walks both directions of one X connection without decoding
 payloads: it counts bytes, requests by name, replies, events, errors and
-image-carrying requests. With hide_shm it rewrites the MIT-SHM QueryExtension
-reply to "not present", as a real remote display would behave.
+image-carrying requests. With hide_shm it rewrites the QueryExtension reply of
+every LOCAL_ONLY_EXTENSIONS entry (MIT-SHM, DRI3, DRI2, XFree86-DRI) to "not
+present", as a real remote display behaves toward a TCP client.
 
 X11Proxy listens on localhost TCP 6000+M (M in 150..199), connects each client
 to the upstream display's unix socket, and holds every forwarded chunk for
@@ -44,6 +45,11 @@ CORE_NAMES[127] = "NoOperation"
 del CORE_NAMES[0]
 
 _QUERY_EXTENSION = 98
+# Extensions that only work for a client on the same host (shared memory, or file descriptors
+# passed over the unix socket). The proxy reaches the server over a unix socket, so the server
+# would offer them, but the TCP client could never use them: a DRI3Open reply's fd would be lost
+# and the client would hang. A real remote display does not offer them to remote clients.
+LOCAL_ONLY_EXTENSIONS = ("MIT-SHM", "DRI3", "DRI2", "XFree86-DRI")
 _IMAGE_REQUESTS = {("core", 72), ("MIT-SHM", 3), ("RENDER", 20)}
 
 
@@ -169,7 +175,7 @@ class X11StreamParser(object):
             total = 32 + 4 * extra
             name = self._pending.pop(seq, None)
             if name is not None:
-                if name == "MIT-SHM" and self.hide_shm:
+                if name in LOCAL_ONLY_EXTENSIONS and self.hide_shm:
                     buf[8] = 0
                 elif buf[8]:
                     self._ext[buf[9]] = name

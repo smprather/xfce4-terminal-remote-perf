@@ -29,6 +29,17 @@ def _cmd_report(args):
     from xtrp import report
     from xtrp.model import load_records
     base, cand = load_records(args.base), load_records(args.cand)
+    for label, build in (("base", args.base_build), ("cand", args.cand_build)):
+        if build is None:
+            continue
+        picked = [r for r in (base if label == "base" else cand) if r["key"]["build"] == build]
+        if not picked:
+            sys.stderr.write("no records for build %s in %s\n" % (build, args.base if label == "base" else args.cand))
+            return 2
+        if label == "base":
+            base = picked
+        else:
+            cand = picked
     try:
         rows = report.compare(base, cand, threshold_pct=args.threshold, cross_platform=args.cross_platform)
     except report.PlatformMismatch as e:
@@ -135,6 +146,8 @@ def main(argv=None):
     p.add_argument("cand")
     p.add_argument("--threshold", type=float, default=5.0, help="regression threshold in percent")
     p.add_argument("--out", help="write markdown here instead of stdout")
+    p.add_argument("--base-build", help="only records of this build from BASE (interleaved runs)")
+    p.add_argument("--cand-build", help="only records of this build from CAND (interleaved runs)")
     p.add_argument("--cross-platform", action="store_true",
                    help="compare records from different platforms (informational, never flags)")
     p.set_defaults(func=_cmd_report)

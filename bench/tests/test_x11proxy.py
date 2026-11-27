@@ -86,6 +86,19 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(p.stats["requests"]["MIT-SHM:3"], 1)
         self.assertEqual(p.stats["image_bytes"], 40)
 
+    def test_fd_passing_extensions_are_hidden(self):
+        # DRI3Open replies carry a file descriptor (SCM_RIGHTS); a TCP client can never get it and
+        # would hang. A real remote display does not offer DRI to a remote client either.
+        p = X11StreamParser(hide_shm=True)
+        p.feed_c2s(SETUP_LE)
+        p.feed_s2c(SETUP_REPLY_LE)
+        names = ("DRI3", "DRI2", "XFree86-DRI", "Present")
+        for seq, name in enumerate(names, 1):
+            p.feed_c2s(query_extension(name))
+        got = [p.feed_s2c(query_extension_reply(seq=seq, present=1, major=140 + seq))[8]
+               for seq in range(1, len(names) + 1)]
+        self.assertEqual(got, [0, 0, 0, 1])
+
     def test_render_addglyphs_counts_as_image_bytes(self):
         p = X11StreamParser()
         p.feed_c2s(SETUP_LE)

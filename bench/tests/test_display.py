@@ -1,9 +1,12 @@
 import os
+import shutil
 import socket
+import tempfile
 import unittest
+from unittest import mock
 
 from tests.xenv import need_tool, pid_alive
-from xtrp import display, xlat
+from xtrp import display, platform, xlat
 from xtrp.display import WindowManager, XServer, WM_NAMES
 
 WM_BINARY = {"mutter": "mutter", "marco-comp": "marco", "marco-nocomp": "marco"}
@@ -20,6 +23,10 @@ class DisplayTest(unittest.TestCase):
             with self.subTest(wm=name):
                 if name != "none":
                     need_tool(WM_BINARY[name])
+                    if not WindowManager.available(name):
+                        if platform.platform_tag() == "host":
+                            self.skipTest("host %s cannot run as an X11 WM (Wayland-only)" % name)
+                        self.fail("%s in the bench image cannot run as an X11 WM" % name)
                 with XServer("xvfb") as xs, WindowManager(name, xs.display):
                     i = xlat.info(xs.display)
                     self.assertEqual(i["wm_name"] is not None, has_wm, i["wm_name"])
@@ -56,6 +63,21 @@ class DisplayTest(unittest.TestCase):
         finally:
             squatter.close()
         self.assertFalse(os.path.exists("/tmp/.X%d-lock" % n))
+
+    def test_mutter_without_x11_support_is_unavailable(self):
+        # mutter >= 49 (the CachyOS host has 51) is Wayland-only: no --x11, so it cannot be an X11 WM
+        tmp = tempfile.mkdtemp(prefix="xtrp-test-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for help_text, want in (("--wayland  Run as a Wayland compositor", False),
+                                ("--x11      Run with X11 backend", True)):
+            fake = os.path.join(tmp, "mutter")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\necho '%s'\n" % help_text)
+            os.chmod(fake, 0o755)
+            display._x11_wm_ok.cache_clear()
+            with mock.patch.dict(os.environ, {"PATH": tmp + os.pathsep + os.environ["PATH"]}):
+                self.assertEqual(WindowManager.available("mutter"), want, help_text)
+        display._x11_wm_ok.cache_clear()
 
     def test_available(self):
         self.assertTrue(WindowManager.available("none"))

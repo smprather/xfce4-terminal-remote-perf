@@ -13,7 +13,28 @@ _CLK_TCK = float(os.sysconf("SC_CLK_TCK"))
 
 
 def proc_cpu_s(pid):
-    """utime + stime of process `pid` (all its threads), in seconds."""
+    """CPU seconds used by process `pid`.
+
+    Sums /proc/<pid>/task/*/schedstat (nanoseconds on CPU, per live thread);
+    /proc/<pid>/stat only counts 10 ms ticks, which made small deltas (40
+    keypresses) pure quantization noise. Threads that already exited are not
+    in the sum; the harness only takes deltas over short windows. Falls back
+    to utime + stime when schedstat is unavailable.
+    """
+    total, found = 0, False
+    try:
+        tids = os.listdir("/proc/%d/task" % pid)
+    except OSError:
+        tids = []
+    for tid in tids:
+        try:
+            with open("/proc/%d/task/%s/schedstat" % (pid, tid)) as f:
+                total += int(f.read().split()[0])
+            found = True
+        except (OSError, ValueError, IndexError):
+            continue
+    if found:
+        return total / 1e9
     with open("/proc/%d/stat" % pid) as f:
         data = f.read()
     fields = data[data.rindex(")") + 2:].split()

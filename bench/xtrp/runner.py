@@ -161,6 +161,7 @@ def _measure_throughput(term, dw, ctx, wl, metrics, flags):
     drain = max(0.0, (last if last is not None else end["t"]) - end["t"])
     metrics["elapsed_s"] = elapsed
     metrics["drain_s"] = drain
+    metrics["total_s"] = elapsed + drain
     if end.get("bytes"):
         metrics["throughput_mb_s"] = end["bytes"] / 1e6 / max(elapsed + drain, 1e-9)
     if end.get("frames") is not None:

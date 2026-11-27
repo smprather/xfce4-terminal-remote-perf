@@ -6,6 +6,7 @@ environment from platform.child_env(), and is stopped by process group
 while its leader is still unreaped, so a recycled pid is never signalled.
 """
 
+import functools
 import os
 import select
 import shutil
@@ -20,6 +21,17 @@ DISPLAY_RANGE = range(50, 100)
 WM_NAMES = ("none", "mutter", "marco-comp", "marco-nocomp")
 _WM_BINARY = {"mutter": "mutter", "marco-comp": "marco", "marco-nocomp": "marco"}
 _START_ATTEMPTS = 5
+
+
+@functools.lru_cache(maxsize=None)
+def _x11_wm_ok(path):
+    """mutter >= 49 is Wayland-only (no --x11 option), so it cannot manage an X11 display."""
+    try:
+        r = subprocess.run([path, "--help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           env=platform.plain_env(), universal_newlines=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--x11" in r.stdout
 
 
 class XServerStartError(RuntimeError):
@@ -205,7 +217,12 @@ class WindowManager(object):
 
     @staticmethod
     def available(name):
-        return name == "none" or platform.tool(_WM_BINARY[name]) is not None
+        if name == "none":
+            return True
+        path = platform.tool(_WM_BINARY[name])
+        if path is None:
+            return False
+        return _x11_wm_ok(path) if _WM_BINARY[name] == "mutter" else True
 
     def _argv(self):
         if self.name == "mutter":
