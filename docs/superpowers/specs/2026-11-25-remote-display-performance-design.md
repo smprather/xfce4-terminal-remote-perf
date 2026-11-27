@@ -51,7 +51,8 @@ A) and never stalling a frame on a round trip. The wire bytes themselves matter 
 ## 3. Goals, non-goals, anti-goals
 
 Goals
-- A repeatable measurement harness that runs inside the EL8 build container (and, in a reduced
+- A repeatable measurement harness that runs inside EL8 and EL9 bench containers and natively on the
+  CachyOS dev host (and, in a reduced
   "live display" mode, on a real target VM without root), and produces baseline-vs-candidate tables.
 - Replace EL8's libvte 0.52.4 (2018) with current upstream VTE (0.84.x) back-ported to EL8's
   GTK 3.22.30 / GLib 2.56, used by xfce4-terminal only.
@@ -82,11 +83,19 @@ Anti-goals (a failure even if it "works")
 
 ## 4. Constraints
 
-- Everything that compiles or packages runs in the EL8 container (`engineering-loadout/build/build-shell`,
+- Everything that compiles or packages a shipped artefact runs in the EL8 container (`engineering-loadout/build/build-shell`,
   image `loadout-build` = almalinux:8.10; gcc-toolset-14 installed, enabled via `loadout_enable_gcc_toolset`).
   Day-to-day editing and quick local experiments may happen on the CachyOS host, but no number that
   decides anything comes from the host.
 - One el8 build serves both A (RHEL 8.10) and B (farm nodes).
+- EL9 forward compatibility (Alma/RHEL 9). The el8 build must also run on a stock EL9 host.
+  - EL9 has GTK 3.24.31, GLib 2.68.4, glibc 2.34, and EPEL9 xfce4-terminal 1.0.4 on AppStream VTE 0.64.2.
+  - A native el9 build is made only if the el8 one fails there.
+- The CachyOS dev host is the third test platform.
+  - The harness and its self-tests run natively there, under Python 3.14.
+  - Its packaged xfce4-terminal 1.2.0 + VTE 0.84.2 is an informational reference build.
+  - Host numbers are never compared against EL numbers as if they were an A/B.
+  - Nothing the harness does may touch the live desktop session on that host.
 - glibc 2.28 floor. C++ built with gcc-toolset-14 (its libstdc++_nonshared covers the newer bits; the result
   must load against EL8's system libstdc++ — verify GLIBCXX/CXXABI version needs with `objdump -T`).
 - No tab characters in anything we write (spaces only; Makefile recipes excepted). Respect each file's
@@ -218,7 +227,9 @@ Fixed conditions: two window sizes, 120×40 and 1920×1080 maximised. Fonts: Cas
 (the loadout seed) and DejaVu Sans Mono 12 (EL8 default). Cursor blink off. AT-SPI bus absent, with an extra
 pass with one present (§7.5g).
 
-Implementation: Python 3.6 or newer, standard library only, so it runs with EL8's `/usr/bin/python3` on
+Each platform (EL8 primary, EL9, CachyOS host) has its own baseline: its packaged xfce4-terminal + VTE.
+
+Implementation: Python 3.6 through 3.14, standard library only, so it runs with EL8's `/usr/bin/python3` on
 targets. The RFB client, the X11 proxy, and orchestration go here. The latency helper is C (libX11, libXtst,
 libXdamage, libXext), built in the container. Output is JSON plus a generated markdown/TSV table.
 
@@ -238,10 +249,15 @@ libXdamage, libXext), built in the container. Output is JSON plus a generated ma
   and so on). Keep VTE's internal event abstraction untouched so the patch stays in one file. Lower the meson
   floor to 3.22 behind our patch.
 - **GLib 2.72 → 2.56 back-port.** Add a small compat header with `g_memdup2` and similar shims. Compile the
-  GUri-based termprop URI paths out under a `VTE_COMPAT_GLIB_256` guard; their public API stays as stubs that
-  return NULL. Fix the remaining compile errors the same way. **Stop and report** if the compat layer grows
+  GUri-based termprop URI paths out under `!GLIB_CHECK_VERSION(2, 72, 0)` guards; their public API stays as
+  stubs that return NULL. Fix the remaining compile errors the same way. **Stop and report** if the compat layer grows
   past roughly 600 lines or needs a GLib behaviour change. That is the signal to reconsider bundling a newer
   GLib, and it is a decision for the user, not the builder.
+- **Version-keyed guards.** Both back-ports key on the toolkit version (`GTK_CHECK_VERSION(3, 24, 0)`,
+  `GLIB_CHECK_VERSION(2, 72, 0)`), so the same tree also builds natively against other toolkits:
+  - EL9: the widget back-port compiles out and the GLib shims stay;
+  - the CachyOS host: both compile out.
+  The native builds are test vehicles; the el8 build is the shipped one.
 - Install as a **private** `libvte-2.91.so.0` that only xfce4-terminal resolves (for example
   `lib64/xfce4-terminal/`, reached by the binary's RUNPATH). The shared payload stem that mate-terminal uses
   is left alone.
@@ -358,6 +374,10 @@ These are measured with the `x11-remote` proxy where cheap and written up as gui
   - A stock `almalinux:8.10` container with only the built artefacts plus loadout's EL8 runtime GTK
     stack. It starts, renders, and passes the harness smoke workload.
   - `objdump -T` shows no GLIBC > 2.28 and no GLIBCXX beyond EL8's.
+  - The same el8 artefacts in a stock `almalinux:9` container, with the same checks (forward compatibility).
+  - The CachyOS host: the smoke workload passes natively against the el8 build and against a native host
+    build.
+- Harness self-tests pass on EL8, EL9, and the CachyOS host (`bench/test-all`).
 - Interactive checklist, run under Xvnc and screenshotted:
   - nvim: splits, completion popups, true-colour themes.
   - tmux: panes, copy-mode, status line.
@@ -383,6 +403,8 @@ Decided by the user
 - T2 uses direct `DISPLAY=A:n` (no ssh). Farm-to-A RTT is about 0.25 ms.
 - The user gathers real-target diagnostics on request.
 - The project lives in a public GitHub repo.
+- Besides EL8, test on EL9 (forward compatibility) and natively on the CachyOS dev host.
+- Execution is native (one implementer, one end-of-branch review).
 
 My calls (correct any of these)
 - xfce4-terminal gets a private libvte; mate-terminal stays on 0.52.4.

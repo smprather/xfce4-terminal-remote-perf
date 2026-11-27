@@ -3,18 +3,22 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `xtrp`, a harness that measures keypress latency, throughput, VNC bytes, X11 protocol
-bytes, damage, CPU, and startup for xfce4-terminal builds in an EL8 container. It also runs reduced
-modes (`diag`, `live`) on real target VMs. Use it to record the baseline: EPEL 1.0.4 + VTE 0.52.4.
+bytes, damage, CPU, and startup for xfce4-terminal builds in EL8 and EL9 containers and natively on
+the CachyOS dev host. It also runs reduced modes (`diag`, `live`) on real target VMs. Use it to record
+the baselines: EPEL8 1.0.4 + VTE 0.52.4 (primary), EPEL9 1.0.4 + VTE 0.64.2, and the host's packaged
+terminal (informational).
 
-**Architecture:** An EL8 container image provides X servers (Xvfb, TigerVNC Xvnc), WMs (mutter,
-marco), the baseline terminal, nvim, tmux, and fonts. A small C helper (`xlat`) does the X-side
-timing: XTest injection, XDamage, window discovery, and display info. A Python 3.6 stdlib-only
-package does everything else: display/WM lifecycle, terminal launch, workload payloads, an RFB
-client, a counting/delaying X11 proxy, the matrix runner, and reporting. Each run writes one JSON
-record. `report` compares two sets of records.
+**Architecture:** EL8 and EL9 container images provide X servers (Xvfb, TigerVNC Xvnc), WMs (mutter,
+marco), the baseline terminal, nvim, tmux, and fonts; the CachyOS host provides the same tools from
+pacman. A small C helper (`xlat`) does the X-side timing: XTest injection, XDamage, window discovery,
+and display info. A Python stdlib-only package (3.6 through 3.14) does everything else: display/WM
+lifecycle, terminal launch, workload payloads, an RFB client, a counting/delaying X11 proxy, the matrix
+runner, and reporting. Each run writes one JSON record. `report` compares two sets of records from the
+same platform.
 
-**Tech Stack:** C (Xlib, XTest, XDamage, XFixes), Python 3.6 stdlib (`unittest`, `socket`,
-`selectors`, `threading`, `subprocess`, `json`), Docker (`almalinux:8.10` + EPEL8 + PowerTools).
+**Tech Stack:** C (Xlib, XTest, XDamage, XFixes), Python 3.6–3.14 stdlib (`unittest`, `socket`,
+`selectors`, `threading`, `subprocess`, `json`), Docker (`almalinux:8.10` + EPEL8 + PowerTools;
+`almalinux:9` + EPEL9 + CRB), CachyOS host (pacman).
 
 **Spec:** `docs/superpowers/specs/2026-11-25-remote-display-performance-design.md` (§7.2 is this plan;
 §3 anti-goals and §8 validation apply).
@@ -26,23 +30,49 @@ record. `report` compares two sets of records.
 
 ## Global Constraints
 
-- Every compile and every measurement that decides anything runs in the bench container (`bench/container …`);
-  the CachyOS host is for editing only.
-- Python must run on EL8's `/usr/bin/python3` (3.6). No dataclasses, no `subprocess.run(capture_output=…)`,
-  no `asyncio.run`, no `time.monotonic_ns`, no walrus, no `from __future__ import annotations`. Tests use
-  `unittest` (no pytest). Run them with `bench/container python3 -m unittest discover -s bench/tests -t bench`.
+- Three platforms, named by `xtrp.platform.platform_tag()`:
+  - `el8`: the `almalinux:8.10` bench container, `bench/container …` (or `--el 8`). This is the primary
+    platform; every number that decides anything comes from here.
+  - `el9`: the `almalinux:9` bench container, `bench/container --el 9 …`. Forward compatibility.
+  - `host`: the CachyOS dev box, run natively from the repo root. Any non-EL `/etc/os-release` maps to `host`.
+    Its numbers are informational.
+- A task is done when `bench/test-all` passes. It runs
+  `python3 -m unittest discover -s bench/tests -t bench` in el8, then el9, then natively on the host,
+  and exits non-zero if any of them fails.
+- A missing tool fails a test inside a container. On the host it skips the test instead, and the skip
+  reason names the pacman package (`xenv.need_tool(name)`, Task 2).
+- Python must run on EL8's `/usr/bin/python3` (3.6) and on the host's Python (3.14).
+  - For 3.6: no dataclasses, no `subprocess.run(capture_output=…)`, no `asyncio.run`, no
+    `time.monotonic_ns`, no walrus, no `from __future__ import annotations`.
+  - For 3.14: no modules removed by 3.13 (`asyncore`, `asynchat`, `imp`, `distutils`, `pipes`, `telnetlib`,
+    `cgi`, `crypt`, `smtpd`). Use `shlex.quote`.
+  - Tests use `unittest` (no pytest).
+- Every child process the harness starts gets its environment from `xtrp.platform.child_env()`. The
+  environment is built from scratch, never inherited. On the host this keeps everything off the live
+  desktop session, its D-Bus, and its config (Review Focus #4).
+- Tool paths come from `xtrp.platform.tool(name)`:
+  - nvim: `/opt/nvim/bin/nvim`, else the one on `PATH`;
+  - tmux: `/usr/local/bin/tmux`, else the one on `PATH`;
+  - everything else: `PATH`.
 - Timestamps everywhere are CLOCK_MONOTONIC. Python uses `time.monotonic()` (float seconds). `xlat` prints
   integer nanoseconds; Python converts them to seconds on read.
 - Spaces only, never tab characters. Python, C, and shell use a 4-space indent. Do not use Makefiles; build
   with `bench/helpers/build.sh`.
 - tmux is only ever invoked with a private socket `-L xtrp-<pid>`. Never run `kill-server` without `-L`.
   `bench/tests/test_policy.py` enforces this.
+- Processes are stopped only by the pid or process group the harness itself spawned. Never stop them by name
+  (`pkill`, `killall`, `pgrep … | xargs kill`): on the host, the user's own xfce4-terminal and tmux are
+  running. `test_policy.py` also fails on any `pkill` or `killall` under `bench/`.
 - The matrix runner is the only thing that starts X servers. It picks display numbers from :50 to :99 and
   never touches `$DISPLAY` from the host.
 - Nothing from a real site is committed before it passes `xtrp.diag.scrub` (spec §3 anti-goal).
 - Run records follow schema 1, defined in Task 7. `report` treats unknown metrics as informational.
-- Baseline build = `/usr/bin/xfce4-terminal` from EPEL8 `xfce4-terminal-1.0.4-1.el8` + AppStream
-  `vte291-0.52.4`.
+- The baseline build is each platform's packaged `/usr/bin/xfce4-terminal`:
+  - el8: EPEL8 `xfce4-terminal-1.0.4-1.el8` + AppStream `vte291-0.52.4`;
+  - el9: EPEL9 `xfce4-terminal-1.0.4-1.el9` + AppStream `vte291-0.64.2`;
+  - host: whatever pacman has installed (today `xfce4-terminal 1.2.0` + `vte3 0.84.2`), recorded in each
+    run record.
+  Records carry `platform`, and `report` refuses to compare across platforms (Task 8).
 - Regression rule: the candidate is worse than the baseline median by more than `max(5%, baseline noise band)`.
   The noise band is `(p90 − p10) / median` of the baseline.
 
@@ -55,9 +85,19 @@ record. `report` compares two sets of records.
    `/tmp/.X50-lock`). Expected: every resource stops on any exit path. Test in Task 7.
 3. **Damage that never settles** (cursor blink, tmux status clock) hangs the runner. Expected: a hard cap; the
    record gets `drain_timeout: true`. Test in Task 7.
-4. **VNC traffic unrelated to the terminal** (pointer, cursor shape) inflates bytes and makes baseline-vs-baseline
-   noisy. Expected: the pointer is parked, the Cursor pseudo-encoding is not requested, and a self-compare flags
-   no regressions. Checked in Task 10.
+4. **Host runs leaking into the user's live desktop.** The CachyOS session is Wayland with Xwayland on
+   `:0`, a session D-Bus, and a running xfce4-terminal. Without care, a test terminal could:
+   - open on the real desktop, via `WAYLAND_DISPLAY` or xfce4-terminal's D-Bus single-instance server;
+   - reach the session bus through `$XDG_RUNTIME_DIR/bus`;
+   - read the user's GTK or xfconf settings.
+
+   Expected: `child_env()` drops `WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS` and every `XDG_*` it doesn't
+   set itself. It sets a private `XDG_RUNTIME_DIR` (mode 0700), `GDK_BACKEND=x11`, and a per-run `HOME`.
+   Terminals and WMs run under `dbus-run-session`, and terminals always get `--disable-server`. Tested in
+   Tasks 2 and 4.
+
+   (The VNC-noise check this slot used to hold, pointer parked and no Cursor pseudo-encoding, stays as
+   Task 10's self-compare.)
 5. **Site identifiers surviving `scrub`** (FQDN in DISPLAY or the vendor string, `/vols/...` paths, IPs). Expected:
    none survive. Test in Task 9.
 
@@ -67,12 +107,17 @@ record. `report` compares two sets of records.
 
 ```
 bench/
-  Dockerfile                 EL8 bench image
-  container                  docker build + run wrapper (sh)
+  image/
+    Dockerfile.el8           EL8 bench image
+    Dockerfile.el9           EL9 bench image
+    install-pinned.sh        shared: fetch + sha256-check + install nvim, tmux, nerd font from pins.json
+  container                  docker build + run wrapper (sh), --el 8|9
+  test-all                   unittest in el8, el9, and natively on the host
+  selftest-host              host prerequisite check (names missing pacman packages)
   pins.json                  pinned URLs + sha256 for nvim, tmux, nerd font
   builds.json                build registry: name -> exec path + env
   helpers/
-    build.sh                 compiles xlat + testwin into bench/helpers/bin/
+    build.sh                 compiles xlat + testwin into bench/helpers/bin/<platform_tag>/
     xlat.c                   X-side timing helper (modes: info, wait-window, focus, latency, damage, pick)
     testwin.c                deterministic X test client for helper/RFB/proxy tests
   conf/
@@ -82,6 +127,7 @@ bench/
   xtrp/
     __init__.py
     __main__.py              argparse CLI: run | report | diag | live | workload
+    platform.py              platform_tag, tool, child_env, packages
     model.py                 Build, RunKey, record I/O
     display.py               XServer, WindowManager
     xlat.py                  thin Python wrappers over the xlat binary
@@ -102,37 +148,48 @@ results/summary/             committed, scrubbed summaries
 
 ---
 
-### Task 1: Bench container image
+### Task 1: Bench container images (EL8, EL9) and host prerequisites
 
 **Files:**
-- Create: `bench/Dockerfile`, `bench/container`, `bench/pins.json`, `bench/selftest-image`
+- Create: `bench/image/Dockerfile.el8`, `bench/image/Dockerfile.el9`, `bench/image/install-pinned.sh`,
+  `bench/container`, `bench/pins.json`, `bench/selftest-image`, `bench/selftest-host`
 
 **Interfaces:**
-- Produces: `bench/container <cmd...>`. It builds image `xtrp-bench` if needed, then runs
-  `docker run --rm --init --network none -v <repo>:/work -w /work --user <uid>:<gid> xtrp-bench <cmd...>`.
-  Use `--network host` only when `XTRP_NET=1`, for image builds or pin refreshes. Inside the image:
-  `/usr/bin/xfce4-terminal` (baseline), `Xvfb`, `Xvnc`, `mutter`, `marco`, `xdotool`, `xprop`, `xdpyinfo`,
-  `dbus-run-session`, `/opt/nvim/bin/nvim`, `/usr/local/bin/tmux`, and fonts "CaskaydiaCove Nerd Font Mono"
-  + "DejaVu Sans Mono".
+- Produces: `bench/container [--el 8|9] <cmd...>` (default `--el 8`).
+  - It builds image `xtrp-bench:el<N>` from `bench/image/Dockerfile.el<N>` if needed.
+  - It then runs `docker run --rm --init --network none -v <repo>:/work -w /work --user <uid>:<gid>
+    xtrp-bench:el<N> <cmd...>`.
+  - It uses `--network host` only when `XTRP_NET=1`, for image builds or pin refreshes.
+- Inside both images:
+  - tools: `/usr/bin/xfce4-terminal` (baseline), `Xvfb`, `Xvnc`, `mutter`, `marco`, `xdotool`, `xprop`,
+    `xdpyinfo`, `dbus-run-session`, `/opt/nvim/bin/nvim`, `/usr/local/bin/tmux`;
+  - fonts: "CaskaydiaCove Nerd Font Mono" and "DejaVu Sans Mono".
+- Produces: `bench/selftest-host`, which checks the host for the same tools.
+  - Required, with their pacman packages: `Xvfb` (`xorg-server-xvfb`), `Xvnc` (`tigervnc`), `xdotool`,
+    `xprop` (`xorg-xprop`), `xdpyinfo` (`xorg-xdpyinfo`), `dbus-run-session` (`dbus`), `gcc`, the X11, XTest
+    and XDamage headers, `nvim`, `tmux`, `xfce4-terminal`.
+  - Optional: `mutter`, `marco`.
+  - It prints one `pacman -S --needed …` line covering everything missing. It exits 1 only if something
+    required is missing.
 
-- [ ] **Step 1: Write `bench/selftest-image`** (sh). It runs inside the container and exits non-zero
-  on the first failure:
-  - `rpm -q xfce4-terminal` prints `xfce4-terminal-1.0.4-1.el8.x86_64`;
-  - `rpm -q vte291` starts with `vte291-0.52.4`;
-  - `command -v` succeeds for each tool listed under Produces;
-  - `/opt/nvim/bin/nvim --version | head -1` reports v0.11 or newer;
-  - `tmux -V` prints `tmux 3.5a`;
-  - `fc-list` has both font families;
-  - `python3 -c 'import sys; assert sys.version_info[:2] == (3, 6)'` passes.
+- [ ] **Step 1: Write `bench/selftest-image`** (sh). It runs inside a container and exits non-zero on the
+  first failure. Expectations are keyed on `/etc/os-release` `VERSION_ID` major:
+  - `rpm -q xfce4-terminal` prints `xfce4-terminal-1.0.4-1.el8.x86_64` / `xfce4-terminal-1.0.4-1.el9.x86_64`;
+  - `rpm -q vte291` starts with `vte291-0.52.4` / `vte291-0.64.2`;
+  - `python3 -c 'import sys; print(sys.version_info[:2])'` gives `(3, 6)` / `(3, 9)`;
+  - on both: `command -v` succeeds for each tool listed under Produces; `/opt/nvim/bin/nvim --version | head -1`
+    reports v0.11 or newer; `tmux -V` prints `tmux 3.5a`; `fc-list` has both font families.
 
 - [ ] **Step 2: Run it to verify it fails** (no image yet)
 
 Run: `XTRP_NET=1 bench/container bench/selftest-image`
 Expected: the image build fails (no Dockerfile).
 
-- [ ] **Step 3: Write `bench/Dockerfile` and `bench/pins.json`**
+- [ ] **Step 3: Write the Dockerfiles, `install-pinned.sh`, and `bench/pins.json`**
 
-  Base is `FROM almalinux:8.10`. Enable `epel-release` and `powertools`. Install with dnf:
+  `Dockerfile.el8`:
+  - Base `FROM almalinux:8.10`. Enable `epel-release` and `powertools`.
+  - Install with dnf:
 
   | Group | Packages |
   |---|---|
@@ -146,28 +203,40 @@ Expected: the image build fails (no Dockerfile).
   | tmux build | `libevent-devel`, `ncurses-devel` |
   | Misc | `procps-ng`, `unzip`, `xz`, `bzip2`, `diffutils` |
 
-  Then add three pinned artifacts, each with its URL and sha256 recorded in `pins.json` and checked with
-  `sha256sum -c` during the build:
-  - nvim current stable from `github.com/neovim/neovim-releases`, extracted to `/opt/nvim`. This is the
-    glibc-2.17 build. The official `neovim/neovim` tarball needs a newer glibc than EL8's 2.28.
-    `selftest-image` proves it runs;
-  - tmux 3.5a source, built with `./configure --prefix=/usr/local && make && make install`;
+  `Dockerfile.el9`:
+  - Base `FROM almalinux:9`. Enable `epel-release` and `crb`.
+  - Install the same set with these changes:
+    - `xfce4-terminal-1.0.4-1.el9`;
+    - `python3` instead of `python36`;
+    - `xprop`, `xdpyinfo` and `xwininfo` instead of `xorg-x11-utils`, which EL9 split.
+
+  Both Dockerfiles then `COPY` and run `install-pinned.sh`. It adds three pinned artifacts. Each has its URL
+  and sha256 recorded in `pins.json` and checked with `sha256sum -c`:
+  - nvim, current stable, from `github.com/neovim/neovim-releases`, extracted to `/opt/nvim`.
+    - This is the glibc-2.17 build. The official `neovim/neovim` tarball needs a newer glibc than EL8's 2.28.
+    - The same tarball serves both images. `selftest-image` proves it runs.
+  - tmux 3.5a source, built with `./configure --prefix=/usr/local && make && make install`.
   - nerd-fonts `CascadiaCode.zip` (CaskaydiaCove), installed to `/usr/share/fonts/caskaydia`, then
     `fc-cache -f`.
 
-  `bench/container` derives the repo root from `$0` and builds quietly (`docker build -q`). It sets
-  `-e HOME=/tmp/xtrp-home`, and passes through an interactive TTY only when stdin and stdout are TTYs.
+  `bench/container`:
+  - It derives the repo root from `$0` and builds quietly (`docker build -q -f bench/image/Dockerfile.el<N>`).
+  - It sets `-e HOME=/tmp/xtrp-home`.
+  - It passes through an interactive TTY only when stdin and stdout are TTYs.
 
-- [ ] **Step 4: Run selftest to verify it passes**
+- [ ] **Step 4: Run the selftests to verify they pass**
 
-Run: `XTRP_NET=1 bench/container true && bench/container bench/selftest-image`
-Expected: prints `selftest-image: OK`, exit 0.
+Run: `XTRP_NET=1 bench/container true && bench/container bench/selftest-image && XTRP_NET=1 bench/container --el 9 true && bench/container --el 9 bench/selftest-image && bench/selftest-host`
+Expected: `selftest-image: OK` twice, exit 0.
+- If `selftest-host` exits 1, hand the user its `pacman` line to run as `! sudo pacman -S --needed …`.
+- Do not install host packages yourself.
+- Host-side tests skip until it passes; this does not block the EL tasks.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add bench/Dockerfile bench/container bench/pins.json bench/selftest-image
-git commit -m "bench: EL8 bench image with baseline terminal, X servers, WMs, nvim, tmux, fonts"
+git add bench/image bench/container bench/pins.json bench/selftest-image bench/selftest-host
+git commit -m "bench: EL8 and EL9 bench images, host prerequisite check"
 ```
 
 ---
@@ -176,13 +245,17 @@ git commit -m "bench: EL8 bench image with baseline terminal, X servers, WMs, nv
 
 **Files:**
 - Create: `bench/helpers/xlat.c`, `bench/helpers/testwin.c`, `bench/helpers/build.sh`, `bench/xtrp/__init__.py`,
-  `bench/xtrp/xlat.py`, `bench/tests/test_xlat.py`
+  `bench/xtrp/platform.py`, `bench/xtrp/xlat.py`, `bench/tests/test_platform.py`, `bench/tests/test_xlat.py`,
+  `bench/test-all`
 - Test helper: `bench/tests/xenv.py` provides:
   - `XvfbFixture(unittest.TestCase)`, whose `setUp`/`tearDown` start and stop Xvfb. Until Task 3 exists it
     does this directly; Task 3 swaps in `XServer`. It exposes `.display`, plus
     `.start_testwin(title, delay_ms, rect, damage_forever=False) -> int window` and
     `.stop_testwin(window) -> dict`, the JSON testwin prints on SIGTERM.
   - `pid_alive(pid) -> bool`.
+  - `need_tool(name) -> str`. It returns `platform.tool(name)`. If the tool is missing, it raises
+    `AssertionError` in a container, or `unittest.SkipTest("host lacks <name> (pacman -S <pkg>)")` on the
+    host. `XvfbFixture.setUp` calls `need_tool("Xvfb")`.
 
 **Interfaces:**
 - Produces (CLI; every output line is one JSON object; all times are CLOCK_MONOTONIC ns):
@@ -208,8 +281,28 @@ git commit -m "bench: EL8 bench image with baseline terminal, X servers, WMs, nv
     - On each KeyPress it waits D ms, then fills a WxH rect in alternating black and white.
     - With `--damage-forever` it fills a 10×10 rect every 50 ms regardless of input.
     - On SIGTERM it prints `{"keys":count}` and exits.
+- Produces (Python, `bench/xtrp/platform.py`):
+  - `platform_tag() -> str`:
+    - `"el<major>"` when `/etc/os-release` `ID` or `ID_LIKE` contains `rhel`, `centos`, or `fedora`
+      together with an EL-style `VERSION_ID`;
+    - otherwise `"host"`.
+  - `tool(name) -> str | None`, as in Global Constraints.
+  - `PACMAN_PKG: dict`, mapping tool → pacman package for skip messages and `selftest-host`. Mappings:
+    `Xvfb→xorg-server-xvfb`, `Xvnc→tigervnc`, `xprop→xorg-xprop`, `xdpyinfo→xorg-xdpyinfo`,
+    `dbus-run-session→dbus`; any other name maps to itself.
+  - `child_env(display, workdir, extra=None) -> dict`. It builds a fresh dict; nothing is copied from
+    `os.environ` except `PATH`, `LANG`, and `TZ`. It sets:
+    - `DISPLAY=display`;
+    - `HOME=<workdir>/home`, `XDG_CONFIG_HOME=<workdir>/home/.config`, `XDG_CACHE_HOME=<workdir>/home/.cache`,
+      `XDG_DATA_HOME=<workdir>/home/.local/share`;
+    - `XDG_RUNTIME_DIR=<workdir>/run`, created with mode 0700;
+    - `GDK_BACKEND=x11`, `NO_AT_BRIDGE=1`;
+    - then applies `extra`.
+    It never sets `WAYLAND_DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`, `XAUTHORITY`, or `SESSION_MANAGER`.
+  - `packages() -> dict`, the versions of `xfce4-terminal` and the VTE package: `rpm -q` on el (`vte291`),
+    `pacman -Q` on the host (`vte3`).
 - Produces (Python, `bench/xtrp/xlat.py`):
-  - `XLAT = <repo>/bench/helpers/bin/xlat`;
+  - `XLAT = $XTRP_XLAT` if set (the live bundle sets it), else `<repo>/bench/helpers/bin/<platform_tag()>/xlat`;
   - `run_json(args: list, display: str, timeout_s: float) -> list[dict]`;
   - `info(display) -> dict`;
   - `wait_window(display, title, timeout_ms=15000) -> (int window, float t_s)`;
@@ -245,24 +338,56 @@ def test_damage_reports_rect_area(self):  # testwin --damage-forever, 1 s -> >= 
     ...
 ```
 
+  And in `bench/tests/test_platform.py`, with no X server needed:
+
+```python
+def test_child_env_is_built_not_inherited(self):
+    os.environ.update(WAYLAND_DISPLAY="wayland-9", DBUS_SESSION_BUS_ADDRESS="unix:path=/x",
+                      XDG_RUNTIME_DIR="/run/user/1", XDG_SESSION_TYPE="wayland", FOO="1")
+    e = child_env(":57", self.tmp)
+    for k in ("WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "FOO"):
+        self.assertNotIn(k, e)
+    self.assertEqual(e["DISPLAY"], ":57"); self.assertEqual(e["GDK_BACKEND"], "x11")
+    self.assertEqual(e["XDG_RUNTIME_DIR"], os.path.join(self.tmp, "run"))
+    self.assertEqual(os.stat(e["XDG_RUNTIME_DIR"]).st_mode & 0o777, 0o700)
+    self.assertTrue(e["HOME"].startswith(self.tmp))
+
+def test_platform_tag_matches_os_release(self):
+    # el8 in the el8 container, el9 in el9, host on CachyOS (parse a planted os-release via a path arg)
+    ...
+```
+
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `bench/container python3 -m unittest -v tests.test_xlat` (with `-t bench -s bench/tests` per Global Constraints)
-Expected: FAIL/ERROR. The `xlat` binary is missing.
+Run: `bench/container python3 -m unittest -v tests.test_xlat tests.test_platform` (with `-t bench -s bench/tests`
+per Global Constraints)
+Expected: FAIL/ERROR, because `xtrp.platform` and the `xlat` binary are missing.
 
-- [ ] **Step 3: Implement `xlat.c`, `testwin.c`, `build.sh`, `xlat.py`**
+- [ ] **Step 3: Implement `platform.py`, `xlat.c`, `testwin.c`, `build.sh`, `xlat.py`, and `bench/test-all`**
 
-  `build.sh` compiles both programs with `-O2 -Wall -Werror`, linking `-lX11 -lXtst -lXdamage -lXfixes -lXext`,
-  into `bench/helpers/bin/`. Add `bench/helpers/bin/` to `.gitignore`. `xlat.py` runs `build.sh` once if the
-  binary is missing.
+  `build.sh` compiles both programs with `-O2 -Wall -Werror`, linking `-lX11 -lXtst -lXdamage -lXfixes -lXext`.
+  The output goes to `bench/helpers/bin/<tag>/`. The tag is computed in sh with the same rule as
+  `platform_tag()`, and the per-platform directory exists because el8, el9, and the host share the
+  bind-mounted tree. Add `bench/helpers/bin/` to `.gitignore`. `xlat.py` runs `build.sh` once if the binary is
+  missing.
 
-- [ ] **Step 4: Run tests to verify they pass** (same command). Expected: 4 tests OK.
+  `bench/test-all`:
+  - It runs the suite in el8, then el9, then on the host, and prints one `<platform>: OK|FAIL (n tests,
+    s skipped)` line for each.
+  - It continues past failures and exits 1 if any platform failed.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `bench/test-all`
+Expected: el8 and el9 show 6 tests OK. The host shows OK; its X tests are skipped until `selftest-host`
+passes.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add bench/helpers bench/xtrp/__init__.py bench/xtrp/xlat.py bench/tests/test_xlat.py bench/tests/xenv.py .gitignore
-git commit -m "bench: xlat X-side timing helper and testwin fixture"
+git add bench/helpers bench/xtrp/__init__.py bench/xtrp/platform.py bench/xtrp/xlat.py bench/tests/test_xlat.py \
+    bench/tests/test_platform.py bench/tests/xenv.py bench/test-all .gitignore
+git commit -m "bench: xlat X-side timing helper, testwin fixture, platform detection and child env"
 ```
 
 ---
@@ -281,6 +406,9 @@ git commit -m "bench: xlat X-side timing helper and testwin fixture"
     - Attributes: `.display` (`":N"`), `.number`, `.pid`, `.rfb_port` (`5900+N` for xvnc, else `None`).
     - It picks the first N in 50..99 with no `/tmp/.XN-lock` and no `/tmp/.X11-unix/XN`. It is ready when
       `xlat info` succeeds (10 s cap).
+    - If the server exits during startup, it tries the next free N, up to 5 attempts. On the host, the
+      abstract socket `@/tmp/.X11-unix/XN` can be taken even when the lock file is absent.
+    - Every server and WM is spawned with `platform.child_env(display, workdir)`.
     - Xvfb runs as `Xvfb :N -screen 0 WxHxD -nolisten tcp -noreset`.
     - Xvnc runs as `Xvnc :N -geometry WxH -depth D -SecurityTypes None -rfbport P -nolisten tcp -AlwaysShared`.
     - `.stop()` sends SIGTERM, waits 5 s, then SIGKILL, and removes the lock and socket if they are left over.
@@ -290,6 +418,9 @@ git commit -m "bench: xlat X-side timing helper and testwin fixture"
     - marco runs as `dbus-run-session -- marco --replace --composite|--no-composite`.
     - Ready when `xlat info` shows `wm_name` set, plus, for mutter and marco-comp, `cm_owner` true
       (15 s cap). Otherwise it raises `WmStartError`, including the WM's stderr tail.
+    - `WindowManager.available(name) -> bool` is true for `"none"`, and otherwise when the WM binary is
+      found. Tests call `need_tool` for each WM in a `subTest`. On the host this skips missing WMs; in the
+      containers a missing WM fails.
   - `WM_NAMES = ("none", "mutter", "marco-comp", "marco-nocomp")`
 
 - [ ] **Step 1: Write failing tests**
@@ -340,11 +471,18 @@ def test_stop_leaves_no_lock_or_process(self):
     - `.start(timeout_s=15)` sets `.window` (int), `.pid`, and `.startup_ms`, and returns `self`.
       `startup_ms` is the time from `Popen` to `wait_window`.
     - `.stop()` kills the process group; it is idempotent. Context manager.
-    - It writes `<workdir>/home/.config/xfce4/terminal/terminalrc` from the template and runs with
-      `HOME=<workdir>/home`, `XDG_CONFIG_HOME=<workdir>/home/.config`, `NO_AT_BRIDGE=1`, no
-      `DBUS_SESSION_BUS_ADDRESS`, and `DISPLAY=display`.
-    - argv: `[exec, "--disable-server", "--geometry", SIZES[size], "--title", title, "--hide-menubar",
-      "--hide-toolbar", "-x"] + command`, where `title = "xtrp-<pid>-<counter>"`.
+    - It writes the same settings in two forms:
+      - `<workdir>/home/.config/xfce4/terminal/terminalrc` from the template, read by 1.0.4;
+      - `<workdir>/home/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-terminal.xml`, read by 1.1+ through
+        xfconf (the host's 1.2.0). Each property is its rc key in kebab case, so `FontName` becomes
+        `/font-name`, with the same value and the matching xfconf type (`bool`, `string`, or `int`).
+    - It runs with `platform.child_env(display, workdir, build.env)`.
+    - argv: `["dbus-run-session", "--", exec, "--disable-server", "--geometry", SIZES[size], "--title", title,
+      "--hide-menubar", "--hide-toolbar", "-x"] + command`, where `title = "xtrp-<pid>-<counter>"`.
+      - The private bus lets xfconfd (1.1+) start against the per-run `HOME`.
+      - It also keeps the terminal off any session bus, including the host's.
+      - The `.pid` attribute is the terminal's pid, found as the `xfce4-termina*` child of the session. It is
+        not dbus-run-session's pid.
 - `terminalrc.in` pins these keys (all from 1.0.4's rc blurbs):
   - `FontName=@FONT@`, `FontUseSystem=FALSE`, `FontAllowBold=TRUE`;
   - `MiscCursorBlinks=FALSE`, `MiscBell=FALSE`, `MiscConfirmClose=FALSE`, `MiscShowUnsafePasteDialog=FALSE`;
@@ -365,7 +503,18 @@ def test_baseline_maps_titled_window_and_stops_cleanly(self):
     self.assertFalse(pid_alive(pid))
 
 def test_rc_file_carries_font_and_blink_off(self):
-    ...  # after start: read terminalrc, assert "FontName=CaskaydiaCove Nerd Font Mono 12" and "MiscCursorBlinks=FALSE"
+    ...  # after start: read terminalrc, assert "FontName=CaskaydiaCove Nerd Font Mono 12" and "MiscCursorBlinks=FALSE";
+         # read the xfconf XML, assert /font-name and /misc-cursor-blinks (bool false) are present
+
+def test_idle_terminal_is_damage_quiet(self):
+    # proves the settings were actually applied (a blinking cursor damages every ~0.6 s), on every platform:
+    # start baseline running `sleep 60`, wait 1 s, then run `xlat damage --window W` for 2 s -> 0 rects
+
+def test_terminal_never_touches_host_session(self):
+    # spawn with os.environ carrying WAYLAND_DISPLAY / DBUS_SESSION_BUS_ADDRESS / XDG_RUNTIME_DIR of the caller;
+    # read /proc/<t.pid>/environ: none of those values appear, DISPLAY is the test display,
+    # DBUS_SESSION_BUS_ADDRESS (set by dbus-run-session) points under the per-run workdir or is an abstract
+    # socket that differs from the caller's, and the window exists on the test display only
 ```
 
 - [ ] **Step 2: Run to verify they fail.** Expected: ImportError.
@@ -418,6 +567,8 @@ def test_rc_file_carries_font_and_blink_off(self):
       `nvim-type` runs nvim in insert mode. `tmux-type` runs `cat` inside tmux.
   - `ctx.sync` → `XTRP_SYNC=1`. `init.lua` then sets `termsync`, and `tmux.conf` sources
     `set -as terminal-features ',xterm-256color:sync'` via `if-shell '[ "$XTRP_SYNC" = 1 ]'`.
+  - nvim and tmux are always invoked through `platform.tool("nvim")` / `platform.tool("tmux")`, never by a
+    hard-coded path.
   - `tmux.conf`: `status-interval 0`, `set-titles off`, `default-terminal screen-256color`.
   - `init.lua`: `notitle`, `number`, `cursorline`, `syntax on`, a fixed statusline, and no plugins.
 
@@ -441,8 +592,10 @@ def test_payload_writes_start_and_end_status(self):  # run `xtrp workload bulk-a
     ...  # status file has a start then an end event, end.t >= start.t, bytes == 65536
 ```
 
-  `test_policy.py` scans every file under `bench/` for `tmux` invocations. It asserts each one passes `-L`, and
-  that no `kill-server` appears without `-L xtrp-`.
+  `test_policy.py` scans every file under `bench/` for `tmux` invocations. It asserts:
+  - each one passes `-L`;
+  - no `kill-server` appears without `-L xtrp-`;
+  - no `pkill` or `killall` appears anywhere.
 
 - [ ] **Step 2: Run to verify they fail.**
 - [ ] **Step 3: Implement.** Keep the generators pure (`random.Random(seed)`). Truncate the final chunk on a
@@ -570,7 +723,8 @@ def test_split_feeds_parse_identically(self):   # same stream fed 1 byte at a ti
     - `vnc_encoding` is `"tight"` or `"zrle"` on xvnc kinds, else `None`.
     - `variant` is `"default"` or `"sync"`; `"sync"` sets `ctx.sync=True`. Plan 1 presets use only
       `"default"`; Plan 3 adds `sync`, `at-spi`, and the font-rendering variants.
-  - Run record (schema 1) = `{"schema":1, "key":{RunKey fields}, "iteration":int, "host":{"xlat_info":…},
+  - Run record (schema 1) = `{"schema":1, "key":{RunKey fields}, "iteration":int,
+    "platform":{"tag":platform_tag(),"packages":platform.packages()}, "host":{"xlat_info":…},
     "metrics":{…}, "flags":{"drain_timeout":bool,"errors":[str]}}`. Metrics present depend on the workload:
     - all workloads: `startup_ms`, `term_cpu_s`, `xserver_cpu_s`, `damage_events`, `damage_area_px`;
     - latency: `latency_ms` (list, 40 samples, interval 120 ms);
@@ -594,6 +748,8 @@ def test_split_feeds_parse_identically(self):   # same stream fed 1 byte at a ti
     written. One X server + WM per (display, wm) group is reused across workloads and iterations. A fresh
     terminal is started per run. The pointer is parked at (0, 0) before measuring. Any exception in one run
     is recorded in `flags.errors`, and the matrix continues.
+    - On the host only, it drops WMs for which `WindowManager.available()` is false, and prints one
+      `skipped wm <name>: not installed` line per dropped WM. In a container, an unavailable WM is an error.
   - CLI: `python3 -m xtrp run --preset P --build baseline [--build …] --out results/raw/<stamp>`.
 
 - [ ] **Step 1: Write failing tests**
@@ -651,6 +807,10 @@ def test_sigint_mid_matrix_leaves_nothing_running(self):
     base median, cand median, Δ%, noise%, and flag. Regressions are listed first in a summary block.
   - CLI: `python3 -m xtrp report BASE_DIR CAND_DIR [--threshold 5] [--out file.md]`. It exits 1 if any row
     regressed.
+  - If any record's `platform.tag` differs from the others, `compare` raises `PlatformMismatch`, and the CLI
+    prints `refusing to compare <a> with <b>` and exits 2.
+  - `--cross-platform` renders the table anyway, with every `regression` false and a banner saying the numbers
+    are informational.
 
 - [ ] **Step 1: Write failing tests** with synthetic records:
   - latency 10 → 12 ms is a regression at 0% noise;
@@ -658,7 +818,9 @@ def test_sigint_mid_matrix_leaves_nothing_running(self):
   - throughput 100 → 90 is a regression;
   - noise 30% suppresses a −20% delta;
   - a missing key gets a note and no flag;
-  - the markdown contains the regression summary first.
+  - the markdown contains the regression summary first;
+  - el8 records against host records raise `PlatformMismatch`; with `cross_platform=True` there are rows but no
+    flags.
 - [ ] **Step 2: Run to verify they fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run to verify they pass.**
@@ -707,8 +869,12 @@ def test_sigint_mid_matrix_leaves_nothing_running(self):
     - `python3 -m xtrp live watch --window ID --seconds S`.
     - `live` prints the instruction "focus the terminal, run `cat`, then press Enter here" and waits on stdin
       before injecting anything.
-  - `bench/make-live-bundle` writes `dist/xtrp-live.tar.gz` containing `xtrp/`, a prebuilt `xlat` (built in the
-    container), `conf/`, and a `run` sh wrapper (`/usr/bin/python3` or `/usr/libexec/platform-python`).
+  - `bench/make-live-bundle` writes `dist/xtrp-live.tar.gz` containing:
+    - `xtrp/`;
+    - a prebuilt `bin/xlat`, built in the el8 container so that one binary (glibc 2.28) runs on EL8 and EL9;
+    - `conf/`;
+    - a `run` sh wrapper. It uses `/usr/bin/python3` or `/usr/libexec/platform-python` and sets
+      `XTRP_XLAT=<bundle>/bin/xlat`.
   - `docs/LIVE.md` gives the exact commands for T1 (on A) and T2 (terminal on B with `DISPLAY=A:n`, xtrp on A),
     and says what to paste back.
 
@@ -731,8 +897,12 @@ def test_live_refuses_unfocused_window(self):  # testwin A focused, target B -> 
 ```
 
 - [ ] **Step 2: Run to verify they fail.**
-- [ ] **Step 3: Implement.** Also add `bench/tests/test_bundle.py`. It builds the bundle, extracts it into a
-  fresh directory, and runs `./run diag` on Xvfb. The JSON must parse.
+- [ ] **Step 3: Implement.** Also add `bench/tests/test_bundle.py`.
+  - It builds the bundle, or reuses `dist/xtrp-live.tar.gz` when present (always el8-built), and extracts it
+    into a fresh directory.
+  - It runs `./run diag` on Xvfb. The JSON must parse.
+  - Through `test-all`, this runs on el8, el9 and the host, which proves the el8-built `xlat` runs on all
+    three.
 - [ ] **Step 4: Run to verify they pass.**
 - [ ] **Step 5: Commit** — `git commit -m "bench: scrubbed diag, focus-guarded live mode, live bundle + LIVE.md"`
 
@@ -742,44 +912,65 @@ def test_live_refuses_unfocused_window(self):  # testwin A focused, target B -> 
 
 **Files:**
 - Create: `results/summary/2026-11-25-baseline.md` (date = run date), `results/summary/README.md`
-- Modify: `README.md` (status line + how to run the harness)
+- Modify: `README.md` (status line, how to run the harness on each platform)
 
-- [ ] **Step 1: Run the noise check.** Run `quick` twice for the baseline:
+- [ ] **Step 1: Run the el8 noise check.** Run `quick` twice for the baseline:
 
 Run: `bench/container sh -c 'python3 -m xtrp run --preset quick --build baseline --out results/raw/q1 && python3 -m xtrp run --preset quick --build baseline --out results/raw/q2 && python3 -m xtrp report results/raw/q1 results/raw/q2'`
-Expected: exit 0, no regressions flagged. If any are flagged, fix the noise source first; Review Focus #4
-is the likely cause. Do not raise the threshold.
+Expected: exit 0, no regressions flagged.
+- If any are flagged, fix the noise source first. The likely cause is VNC traffic unrelated to the terminal:
+  an unparked pointer, or a requested Cursor pseudo-encoding.
+- Do not raise the threshold.
 
-- [ ] **Step 2: Run `full` and `rtt-sweep` for the baseline** (long; run it in the background):
+- [ ] **Step 2: Run `full` and `rtt-sweep` for the el8 baseline** (long; run it in the background):
 
 Run: `bench/container python3 -m xtrp run --preset full --build baseline --out results/raw/base-full`, then the
 same with `--preset rtt-sweep --out results/raw/base-rtt`.
 Expected: records = matrix size. Every record has an empty `flags.errors`, or the errors are explained in the
 summary.
 
-- [ ] **Step 3: Write `results/summary/<date>-baseline.md`.** It covers:
+- [ ] **Step 3: Run the el9 and host references.**
+
+Run: the Step 1 command with `bench/container --el 9` and outputs `results/raw/el9-q1` / `el9-q2`. Expected: the
+self-compare is clean.
+
+Run: `bench/selftest-host && python3 -m xtrp run --preset smoke --build baseline --out results/raw/host-smoke && python3 -m xtrp run --preset quick --build baseline --out results/raw/host-q1`
+(natively, from the repo root).
+Expected:
+- records carry `platform.tag == "host"`, and the host's `xfce4-terminal` / `vte3` versions are in
+  `platform.packages`;
+- the user's desktop shows no new windows during the run;
+- skipped WMs, if any, are listed.
+
+- [ ] **Step 4: Write `results/summary/<date>-baseline.md`.** It covers:
   - the image pins;
-  - per-WM and per-display medians for every workload;
-  - the five biggest costs observed, which are Plan 3's ordering input;
+  - per-WM and per-display medians for every el8 workload;
+  - the five biggest el8 costs observed, which are Plan 3's ordering input;
   - anything surprising, for example the effect of mutter vs marco compositing on latency, or the RFB
     CopyRect count (expected 0 for VTE 0.52).
+  - An "other platforms" section: el9 (VTE 0.64.2) and host (VTE 0.84.2, xfce4-terminal 1.2.0) medians next
+    to el8's.
+    - Label it informational.
+    - Use `report --cross-platform`.
+    - Say plainly that the userland and VTE both differ, so this is a hint about newer VTE, not an A/B.
   Run its content through `scrub` before committing.
 
-- [ ] **Step 4: Build the live bundle and request the first real-target checkpoint.**
+- [ ] **Step 5: Build the live bundle and request the first real-target checkpoint.**
 
 Run: `bench/container bench/make-live-bundle`
-Expected: `dist/xtrp-live.tar.gz` exists, and `test_bundle` passes. Then hand the user the bundle path and
-`docs/LIVE.md`. Ask for `diag` + `live latency` + `live watch` on:
+Expected: `dist/xtrp-live.tar.gz` exists, and `test_bundle` passes.
+
+Then hand the user the bundle path and `docs/LIVE.md`. Ask for `diag` + `live latency` + `live watch` on:
 - T1: a GNOME Classic session and a MATE session, each under TigerVNC, NoMachine, and ETX;
 - T2: one farm-node run.
 
-- [ ] **Step 5: Run the whole test suite once more, then commit and push.**
+- [ ] **Step 6: Run the whole test suite on all three platforms, then commit and push.**
 
-Run: `bench/container python3 -m unittest discover -s bench/tests -t bench`
-Expected: all OK.
+Run: `bench/test-all`
+Expected: el8, el9, and host all OK (the host with no skips once `selftest-host` passes).
 
 ```bash
 git add results/summary README.md
-git commit -m "results: EPEL 1.0.4 + VTE 0.52.4 baseline across Xvfb/Xvnc/x11-remote and mutter/marco"
+git commit -m "results: baselines (EL8 VTE 0.52.4 primary; EL9 VTE 0.64.2 and host references)"
 git push
 ```
