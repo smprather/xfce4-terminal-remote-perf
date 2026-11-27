@@ -18,7 +18,7 @@ KEY_FIELDS = ("display_kind", "wm", "rtt_ms", "vnc_encoding", "size", "font", "v
 # counters (how the encoder split frames into rects/updates, how many damage events) are
 # informational: they move with timing phase from run to run while the outcome does not.
 METRIC_DIRECTION = {m: -1 for m in (
-    "startup_ms", "term_cpu_s", "xserver_cpu_s", "damage_area_px", "latency_ms", "e2e_latency_ms",
+    "term_cpu_s", "xserver_cpu_s", "damage_area_px", "latency_ms", "e2e_latency_ms",
     "total_s", "vnc_bytes", "x11_c2s_bytes", "x11_s2c_bytes", "x11_replies", "x11_requests",
     "x11_image_bytes", "startup_x11_replies")}
 METRIC_DIRECTION.update({
@@ -26,6 +26,10 @@ METRIC_DIRECTION.update({
     "frames": 1,                 # fullscreen-redraw frames written in its fixed time: more = kept up
     "vnc_copyrect_area": 0,      # more CopyRect is the goal of scroll-by-copy, not a regression
     "elapsed_s": 0, "drain_s": 0, "vnc_rects": 0, "vnc_updates": 0, "damage_events": 0,
+    # Launch time is bimodal (about 1 in 4 launches lands ~40 ms later, whatever the build), so a
+    # median of a few samples cannot hold 5%; startup is not a goal of this project either.
+    # startup_x11_replies (deterministic, matters over a remote X link) stays gated.
+    "startup_ms": 0,
 })
 
 

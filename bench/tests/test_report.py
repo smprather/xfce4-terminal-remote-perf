@@ -62,9 +62,9 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(r["regression"])
 
     def test_scalar_metrics_summarize_across_iterations(self):
-        base = [rec("b", {"startup_ms": v}, iteration=i) for i, v in enumerate((100.0, 110.0, 120.0))]
-        cand = [rec("c", {"startup_ms": 150.0}, iteration=i) for i in range(3)]
-        r = row(compare(base, cand), "startup_ms")
+        base = [rec("b", {"total_s": v}, iteration=i) for i, v in enumerate((100.0, 110.0, 120.0))]
+        cand = [rec("c", {"total_s": 150.0}, iteration=i) for i in range(3)]
+        r = row(compare(base, cand), "total_s")
         self.assertEqual((r["base"]["n"], r["base"]["median"]), (3, 110.0))
         self.assertTrue(r["regression"])
 
@@ -87,7 +87,7 @@ class CompareTest(unittest.TestCase):
 
     def test_components_and_structure_counters_are_informational(self):
         # gated: outcomes; informational: their parts (drain/elapsed) and encoder/frame structure counts
-        for m in ("drain_s", "elapsed_s", "vnc_rects", "vnc_updates", "damage_events"):
+        for m in ("drain_s", "elapsed_s", "vnc_rects", "vnc_updates", "damage_events", "startup_ms"):
             self.assertEqual(METRIC_DIRECTION[m], 0, m)
         for m in ("total_s", "latency_ms", "vnc_bytes", "damage_area_px", "term_cpu_s"):
             self.assertEqual(METRIC_DIRECTION[m], -1, m)
@@ -122,9 +122,9 @@ class CompareTest(unittest.TestCase):
 class MarkdownTest(unittest.TestCase):
 
     def test_markdown_puts_regressions_first(self):
-        rows = compare([rec("b", {"latency_ms": [10.0], "startup_ms": 100.0}),
+        rows = compare([rec("b", {"latency_ms": [10.0], "total_s": 100.0}),
                         rec("b", {"latency_ms": [10.0]}, wm="marco-comp")],
-                       [rec("c", {"latency_ms": [12.0], "startup_ms": 100.0}),
+                       [rec("c", {"latency_ms": [12.0], "total_s": 100.0}),
                         rec("c", {"latency_ms": [10.0]}, wm="marco-comp")])
         md = render_markdown(rows)
         self.assertIn("Regressions", md)

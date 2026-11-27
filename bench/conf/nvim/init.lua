@@ -28,10 +28,12 @@ local function stat(pid)
   return comm, tonumber(fields[2]), tonumber(fields[12]) + tonumber(fields[13])
 end
 
--- CPU seconds of a process: sum of its live threads' schedstat (ns); falls back to stat ticks
+-- CPU seconds of a process: sum of its threads' schedstat (ns). A thread that exited keeps its last
+-- reading (GLib pool threads exit when idle), so the total never goes backwards. Falls back to ticks.
+local threads_seen = {}
 local function cpu_s(pid, ticks)
   local ok, tids = pcall(vim.fn.readdir, "/proc/" .. pid .. "/task")
-  local total, found = 0, false
+  local found = false
   if ok and type(tids) == "table" then
     for _, tid in ipairs(tids) do
       local f = io.open("/proc/" .. pid .. "/task/" .. tid .. "/schedstat")
@@ -39,15 +41,20 @@ local function cpu_s(pid, ticks)
         local ns = tonumber((f:read("*l") or ""):match("^(%d+)"))
         f:close()
         if ns then
-          total, found = total + ns, true
+          threads_seen[tid] = math.max(ns, threads_seen[tid] or 0)
+          found = true
         end
       end
     end
   end
-  if found then
-    return total / 1e9
+  if not found then
+    return ticks / clk_tck
   end
-  return ticks / clk_tck
+  local total = 0
+  for _, ns in pairs(threads_seen) do
+    total = total + ns
+  end
+  return total / 1e9
 end
 
 -- CPU seconds of the nearest xfce4-terminal ancestor, or nil

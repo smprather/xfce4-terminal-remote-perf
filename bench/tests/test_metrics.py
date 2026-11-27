@@ -39,6 +39,47 @@ class CpuResolutionTest(unittest.TestCase):
         self.assertLess(delta, 0.009)
 
 
+CHILD = r"""
+import sys, threading, time
+release = threading.Event()
+def burn():
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 0.3:
+        pass
+    print("burned", flush=True)
+    release.wait()
+th = threading.Thread(target=burn)
+th.start()
+sys.stdin.readline()
+release.set()
+th.join()
+print("exited", flush=True)
+sys.stdin.readline()
+"""
+
+
+class CpuMonotonicTest(unittest.TestCase):
+
+    def test_cpu_of_an_exited_thread_is_not_lost(self):
+        # GLib pool threads exit ~15 s after going idle; their earlier CPU must not vanish
+        import subprocess
+        import sys
+        p = subprocess.Popen([sys.executable, "-c", CHILD], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             universal_newlines=True)
+        try:
+            self.assertEqual(p.stdout.readline().strip(), "burned")
+            c0 = proc_cpu_s(p.pid)
+            p.stdin.write("\n")
+            p.stdin.flush()
+            self.assertEqual(p.stdout.readline().strip(), "exited")
+            c1 = proc_cpu_s(p.pid)
+            self.assertGreaterEqual(c1, c0 - 0.001)
+            self.assertGreater(c0, 0.25)
+        finally:
+            p.kill()
+            p.wait()
+
+
 class DamageWatchTest(XvfbFixture):
 
     def test_drain_timeout_is_flagged_not_hung(self):
