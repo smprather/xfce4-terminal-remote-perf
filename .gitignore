@@ -10,3 +10,6 @@
 
 # Raw harness output (summaries under results/summary/ are committed after scrubbing)
 /results/raw/
+
+# Per-platform helper binaries (bench/helpers/build.sh)
+/bench/helpers/bin/

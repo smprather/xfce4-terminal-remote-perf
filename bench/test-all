@@ -1,0 +1,31 @@
+#!/bin/sh
+# Run the xtrp unittest suite on el8, el9 (bench containers) and natively on
+# the host. Prints one line per platform and exits 1 if any platform failed.
+# Full logs go to $XTRP_TEST_LOGS (default: a fresh temp directory).
+set -u
+
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+cd "$root" || exit 1
+logs=${XTRP_TEST_LOGS:-$(mktemp -d "${TMPDIR:-/tmp}/xtrp-test-XXXXXX")}
+mkdir -p "$logs"
+status=0
+
+run() {
+    name=$1
+    shift
+    log="$logs/$name.log"
+    if "$@" python3 -m unittest discover -s bench/tests -t bench >"$log" 2>&1; then
+        result=OK
+    else
+        result=FAIL
+        status=1
+    fi
+    ran=$(sed -n 's/^Ran \([0-9]*\) tests\{0,1\} in.*/\1/p' "$log" | tail -n 1)
+    skipped=$(sed -n 's/.*skipped=\([0-9]*\).*/\1/p' "$log" | tail -n 1)
+    echo "$name: $result (${ran:-0} tests, ${skipped:-0} skipped) $log"
+}
+
+run el8 bench/container
+run el9 bench/container --el 9
+run host
+exit $status
