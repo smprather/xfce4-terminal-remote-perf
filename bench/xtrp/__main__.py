@@ -23,6 +23,29 @@ def _cmd_run(args):
     return 0
 
 
+def _cmd_report(args):
+    from xtrp import report
+    from xtrp.model import load_records
+    base, cand = load_records(args.base), load_records(args.cand)
+    try:
+        rows = report.compare(base, cand, threshold_pct=args.threshold, cross_platform=args.cross_platform)
+    except report.PlatformMismatch as e:
+        sys.stderr.write("%s\n" % e)
+        return 2
+    md = report.render_markdown(rows, cross_platform=args.cross_platform,
+                                preamble=[report.flag_summary("base", base) + "  ",
+                                          report.flag_summary("cand", cand)])
+    data = md.encode("utf-8")          # independent of the locale (Python 3.6 under LANG=C)
+    if args.out:
+        with open(args.out, "wb") as f:
+            f.write(data)
+    else:
+        sys.stdout.flush()
+        sys.stdout.buffer.write(data)
+        sys.stdout.buffer.flush()
+    return 1 if any(r["regression"] for r in rows) else 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python3 -m xtrp")
     sub = parser.add_subparsers(dest="command")
@@ -47,6 +70,15 @@ def main(argv=None):
     p.add_argument("--iterations", type=int, help="override every block's iteration count")
     p.add_argument("--builds", help="alternative builds.json")
     p.set_defaults(func=_cmd_run)
+
+    p = sub.add_parser("report", help="compare two record directories")
+    p.add_argument("base")
+    p.add_argument("cand")
+    p.add_argument("--threshold", type=float, default=5.0, help="regression threshold in percent")
+    p.add_argument("--out", help="write markdown here instead of stdout")
+    p.add_argument("--cross-platform", action="store_true",
+                   help="compare records from different platforms (informational, never flags)")
+    p.set_defaults(func=_cmd_report)
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
