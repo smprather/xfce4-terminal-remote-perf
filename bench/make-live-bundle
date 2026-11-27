@@ -1,0 +1,41 @@
+#!/bin/sh
+# Build dist/xtrp-live.tar.gz for real target VMs: the xtrp package, conf/,
+# an xlat binary, LIVE.md, and a `run` wrapper. It must run on el8
+# (bench/container bench/make-live-bundle) so that one xlat binary, linked
+# against glibc 2.28, serves both EL8 and EL9 targets.
+set -eu
+
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+tag=$(PYTHONPATH="$root/bench" python3 -c 'from xtrp.platform import platform_tag; print(platform_tag())')
+if [ "$tag" != el8 ]; then
+    echo "make-live-bundle: run it on el8: bench/container bench/make-live-bundle" >&2
+    exit 1
+fi
+sh "$root/bench/helpers/build.sh"
+
+stage=$(mktemp -d)
+trap 'rm -rf "$stage"' EXIT
+dst="$stage/xtrp-live"
+mkdir -p "$dst/bin"
+cp -r "$root/bench/xtrp" "$dst/xtrp"
+rm -rf "$dst/xtrp/__pycache__"
+cp -r "$root/bench/conf" "$dst/conf"
+cp "$root/bench/helpers/bin/el8/xlat" "$dst/bin/xlat"
+cp "$root/docs/LIVE.md" "$dst/LIVE.md"
+cat > "$dst/run" <<'WRAPPER'
+#!/bin/sh
+# xtrp live bundle: ./run diag | ./run live latency [...] | ./run live watch [...]
+here=$(cd "$(dirname "$0")" && pwd -P)
+if [ -x /usr/bin/python3 ]; then
+    py=/usr/bin/python3
+else
+    py=/usr/libexec/platform-python
+fi
+XTRP_XLAT="$here/bin/xlat" PYTHONPATH="$here" exec "$py" -m xtrp "$@"
+WRAPPER
+chmod +x "$dst/run"
+
+mkdir -p "$root/dist"
+tar -C "$stage" --owner=0 --group=0 --numeric-owner -czf "$root/dist/xtrp-live.tar.gz.tmp" xtrp-live
+mv -f "$root/dist/xtrp-live.tar.gz.tmp" "$root/dist/xtrp-live.tar.gz"
+echo "$root/dist/xtrp-live.tar.gz"

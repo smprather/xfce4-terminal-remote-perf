@@ -1,7 +1,9 @@
 """xtrp command line: python3 -m xtrp <command> ..."""
 
 import argparse
+import os
 import sys
+import time
 
 
 def _cmd_workload(args):
@@ -46,6 +48,63 @@ def _cmd_report(args):
     return 1 if any(r["regression"] for r in rows) else 0
 
 
+def _emit_json(obj):
+    import json
+    sys.stdout.flush()
+    sys.stdout.buffer.write((json.dumps(obj, indent=1, sort_keys=True) + "\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
+def _cmd_diag(args):
+    import json
+    from xtrp import diag
+    d = diag.collect()
+    if args.out:
+        with open(args.out, "wb") as f:
+            f.write((json.dumps(d, indent=1, sort_keys=True) + "\n").encode("utf-8"))
+    else:
+        _emit_json(d)
+    return 0
+
+
+def _countdown(seconds):
+    for n in range(seconds, 0, -1):
+        sys.stderr.write("  %d...\n" % n)
+        sys.stderr.flush()
+        time.sleep(1)
+
+
+def _cmd_live(args):
+    from xtrp import diag, live, xlat
+    display = os.environ.get("DISPLAY", "")
+    if args.what == "latency":
+        other = args.window is not None or args.pick
+        if other:
+            sys.stderr.write("In the terminal you want to measure, run `cat` and leave it there.\n"
+                             "Press Enter here%s, then click into that terminal within 5 s.\n"
+                             % (" (then click the terminal to pick it)" if args.pick else ""))
+        else:
+            sys.stderr.write("This measures the terminal you are typing in. Press Enter, then keep your hands\n"
+                             "off the keyboard for about %d s. Only 'a' and BackSpace are typed.\n"
+                             % (args.samples * 0.15 + 1))
+        sys.stdin.readline()
+        window = args.window
+        if args.pick:
+            window = xlat.run_json(["pick"], display, 120.0)[0]["window"]
+        if other:
+            _countdown(5)
+        try:
+            res = live.live_latency(display, window=window, samples=args.samples)
+        except xlat.NotFocusedError:
+            sys.stderr.write("refused: the target window does not have keyboard focus; nothing was typed\n")
+            return 2
+    else:
+        sys.stderr.write("Watching window %d for %d s: run your workload in it now.\n" % (args.window, args.seconds))
+        res = live.live_watch(display, args.window, args.seconds)
+    _emit_json(diag.scrub(res))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python3 -m xtrp")
     sub = parser.add_subparsers(dest="command")
@@ -79,6 +138,23 @@ def main(argv=None):
     p.add_argument("--cross-platform", action="store_true",
                    help="compare records from different platforms (informational, never flags)")
     p.set_defaults(func=_cmd_report)
+
+    p = sub.add_parser("diag", help="scrubbed diagnostics for the display in $DISPLAY")
+    p.add_argument("--out", help="write JSON here instead of stdout")
+    p.set_defaults(func=_cmd_diag)
+
+    p = sub.add_parser("live", help="measure on a real desktop (focus-guarded)")
+    live_sub = p.add_subparsers(dest="what")
+    q = live_sub.add_parser("latency", help="keypress latency of a focused terminal")
+    g = q.add_mutually_exclusive_group()
+    g.add_argument("--window", type=lambda v: int(v, 0), help="window id (default: this terminal, $WINDOWID)")
+    g.add_argument("--pick", action="store_true", help="click the terminal to measure")
+    q.add_argument("--samples", type=int, default=40)
+    q.set_defaults(func=_cmd_live)
+    q = live_sub.add_parser("watch", help="damage and X server CPU while you drive a window")
+    q.add_argument("--window", type=lambda v: int(v, 0), required=True)
+    q.add_argument("--seconds", type=int, default=30)
+    q.set_defaults(func=_cmd_live)
 
     args = parser.parse_args(argv)
     if not getattr(args, "func", None):
