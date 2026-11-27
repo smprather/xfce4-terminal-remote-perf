@@ -6,7 +6,7 @@ RUN dnf -y -q install epel-release dnf-plugins-core \
     && dnf -y -q install \
         xfce4-terminal-1.0.4-1.el8 vte291 \
         xorg-x11-server-Xvfb tigervnc-server-minimal xdotool xorg-x11-utils xorg-x11-xauth \
-        mutter marco \
+        mutter marco gnome-settings-daemon mate-settings-daemon \
         mesa-dri-drivers dbus-daemon dbus-tools \
         dejavu-sans-mono-fonts fontconfig \
         python36 \
@@ -16,10 +16,13 @@ RUN dnf -y -q install epel-release dnf-plugins-core \
     && dnf clean all \
     && rm -rf /var/cache/dnf
 
-COPY pins.json image/install-pinned.sh /tmp/xtrp-image/
+COPY pins.json image/install-pinned.sh image/entrypoint.sh /tmp/xtrp-image/
 RUN sh /tmp/xtrp-image/install-pinned.sh /tmp/xtrp-image/pins.json \
+    && install -m 0755 /tmp/xtrp-image/entrypoint.sh /usr/local/bin/xtrp-entry \
+    && chmod 0666 /etc/passwd \
     && rm -rf /tmp/xtrp-image \
     && dbus-uuidgen > /etc/machine-id \
     && mkdir -m 1777 /tmp/xtrp-home
 
 ENV LANG=C.UTF-8
+ENTRYPOINT ["/usr/local/bin/xtrp-entry"]

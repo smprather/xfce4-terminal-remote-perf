@@ -6,10 +6,10 @@ import shutil
 import signal
 import subprocess
 import tempfile
-import time
 import unittest
 
 from xtrp import platform, xlat
+from xtrp.display import XServer
 
 
 def pid_alive(pid):
@@ -39,13 +39,6 @@ def need_tool(name):
     raise AssertionError("bench image lacks %s" % name)
 
 
-def _free_display():
-    for n in range(50, 100):
-        if not (os.path.exists("/tmp/.X%d-lock" % n) or os.path.exists("/tmp/.X11-unix/X%d" % n)):
-            return n
-    raise RuntimeError("no free display in :50..:99")
-
-
 class XvfbFixture(unittest.TestCase):
     """Starts a private Xvfb (1024x768x24) per test; tracks testwin processes."""
 
@@ -54,32 +47,10 @@ class XvfbFixture(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="xtrp-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self._testwins = {}
-        self._start_xvfb()
+        self._xserver = XServer("xvfb", 1024, 768, 24).start()
+        self.display = self._xserver.display
+        self.display_number = self._xserver.number
         self.addCleanup(self._stop_all)
-
-    def _start_xvfb(self):
-        last = None
-        for _ in range(5):
-            n = _free_display()
-            display = ":%d" % n
-            proc = subprocess.Popen(
-                ["Xvfb", display, "-screen", "0", "1024x768x24", "-nolisten", "tcp", "-noreset"],
-                env=platform.child_env(display, self.tmp),
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline and proc.poll() is None:
-                try:
-                    xlat.info(display)
-                except xlat.XlatError as e:
-                    last = e
-                    time.sleep(0.05)
-                    continue
-                self.display, self.display_number, self._xvfb = display, n, proc
-                return
-            if proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
-        raise RuntimeError("Xvfb did not start: %s" % last)
 
     def start_testwin(self, title, delay_ms, rect, damage_forever=False):
         argv = [os.path.join(xlat.BIN_DIR, "testwin"), "--title", title,
@@ -107,11 +78,4 @@ class XvfbFixture(unittest.TestCase):
             if proc.stdout:
                 proc.stdout.close()
         self._testwins = {}
-        proc = getattr(self, "_xvfb", None)
-        if proc is not None and proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
+        self._xserver.stop()

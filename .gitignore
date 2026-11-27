@@ -13,3 +13,4 @@
 
 # Per-platform helper binaries (bench/helpers/build.sh)
 /bench/helpers/bin/
+__pycache__/

@@ -1,0 +1,67 @@
+import os
+import socket
+import unittest
+
+from tests.xenv import need_tool, pid_alive
+from xtrp import display, xlat
+from xtrp.display import WindowManager, XServer, WM_NAMES
+
+WM_BINARY = {"mutter": "mutter", "marco-comp": "marco", "marco-nocomp": "marco"}
+
+
+class DisplayTest(unittest.TestCase):
+
+    def test_each_wm_reports_expected_compositing(self):
+        need_tool("Xvfb")
+        expect = {"none": (False, False), "mutter": (True, True),
+                  "marco-comp": (True, True), "marco-nocomp": (True, False)}
+        self.assertEqual(sorted(expect), sorted(WM_NAMES))
+        for name, (has_wm, cm) in sorted(expect.items()):
+            with self.subTest(wm=name):
+                if name != "none":
+                    need_tool(WM_BINARY[name])
+                with XServer("xvfb") as xs, WindowManager(name, xs.display):
+                    i = xlat.info(xs.display)
+                    self.assertEqual(i["wm_name"] is not None, has_wm, i["wm_name"])
+                    self.assertEqual(i["cm_owner"], cm)
+
+    def test_xvnc_exposes_rfb_port_and_vnc_extension(self):
+        need_tool("Xvnc")
+        with XServer("xvnc") as xs:
+            self.assertEqual(xs.rfb_port, 5900 + xs.number)
+            exts = xlat.info(xs.display)["extensions"]
+            self.assertTrue({"VNC-EXTENSION", "TIGERVNC"} & set(exts), exts)
+
+    def test_stop_leaves_no_lock_or_process(self):
+        need_tool("Xvfb")
+        xs = XServer("xvfb")
+        xs.start()
+        n, pid = xs.number, xs.pid
+        xs.stop()
+        self.assertFalse(os.path.exists("/tmp/.X%d-lock" % n))
+        self.assertFalse(os.path.exists("/tmp/.X11-unix/X%d" % n))
+        self.assertFalse(pid_alive(pid))
+
+    def test_busy_abstract_socket_falls_through_to_next_display(self):
+        # Another server holding only @/tmp/.X11-unix/XN (no lock file) must not be mistaken for ours.
+        need_tool("Xvfb")
+        n = display.pick_display()
+        squatter = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        squatter.bind("\0/tmp/.X11-unix/X%d" % n)
+        squatter.listen(1)
+        try:
+            with XServer("xvfb") as xs:
+                self.assertNotEqual(xs.number, n)
+                self.assertEqual(xlat.info(xs.display)["width"], 1920)
+        finally:
+            squatter.close()
+        self.assertFalse(os.path.exists("/tmp/.X%d-lock" % n))
+
+    def test_available(self):
+        self.assertTrue(WindowManager.available("none"))
+        with self.assertRaises(ValueError):
+            WindowManager("twm", ":0")
+
+
+if __name__ == "__main__":
+    unittest.main()
