@@ -42,7 +42,9 @@ class XlatTest(XvfbFixture):
         proc.send_signal(signal.SIGTERM)
         out, _ = proc.communicate(timeout=5)
         self.assertEqual(proc.returncode, 0)
-        rects = [json.loads(l) for l in out.decode().splitlines()]
+        lines = [json.loads(l) for l in out.decode().splitlines()]
+        self.assertTrue(lines[0]["ready"])
+        rects = lines[1:]
         tens = [r for r in rects if (r["w"], r["h"]) == (10, 10)]
         self.assertGreaterEqual(len(tens), 15, rects[:5])
         self.assertTrue(all(isinstance(r["t_ns"], int) for r in rects))
@@ -55,7 +57,10 @@ class XlatTest(XvfbFixture):
         time.sleep(0.5)
         proc.send_signal(signal.SIGTERM)
         out, _ = proc.communicate(timeout=5)
-        self.assertEqual(out.decode().strip(), "")
+        lines = [json.loads(l) for l in out.decode().splitlines()]
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0]["ready"])        # armed, then nothing: creation report dropped
+        self.assertIsInstance(lines[0]["t_ns"], int)
 
     def test_wait_window_times_out(self):
         with self.assertRaises(xlat.WindowTimeout):

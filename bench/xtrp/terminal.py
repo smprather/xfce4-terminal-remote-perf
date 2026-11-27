@@ -99,13 +99,16 @@ def _signal_if_same(pid, starttime, sig):
 class Terminal(object):
     """One xfce4-terminal window on `display`. Context manager."""
 
-    def __init__(self, build, display, size, font, command, workdir, env=None):
+    def __init__(self, build, display, size, font, command, workdir, env=None, xlat_display=None):
+        """`xlat_display` is where the window is looked for (default `display`); the runner passes
+        the real server when the terminal itself connects through the X11 proxy."""
         if size not in SIZES:
             raise ValueError("unknown size %r" % size)
         if font not in FONTS:
             raise ValueError("unknown font %r" % font)
         self.build, self.display, self.size, self.font = build, display, size, font
         self.command, self.workdir, self.env = list(command), workdir, dict(env or {})
+        self.xlat_display = xlat_display or display
         self.window = self.pid = self.startup_ms = self.title = None
         self._proc = None
 
@@ -146,7 +149,7 @@ class Terminal(object):
             if left_ms <= 0:
                 self._fail("no window titled %s within %d s" % (self.title, timeout_s), log_path)
             try:
-                self.window, t_win = xlat.wait_window(self.display, self.title, timeout_ms=min(2000, left_ms))
+                self.window, t_win = xlat.wait_window(self.xlat_display, self.title, timeout_ms=min(2000, left_ms))
                 break
             except xlat.WindowTimeout:
                 if exited(self._proc):

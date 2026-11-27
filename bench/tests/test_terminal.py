@@ -93,7 +93,8 @@ class TerminalTest(unittest.TestCase):
             time.sleep(2.0)
             proc.send_signal(signal.SIGTERM)
             out, _ = proc.communicate(timeout=5)
-            self.assertEqual(out.decode().strip(), "", "idle terminal kept repainting (cursor blink?)")
+            rects = out.decode().strip().splitlines()[1:]       # first line: {"ready": ...}
+            self.assertEqual(rects, [], "idle terminal kept repainting (cursor blink?)")
 
     def test_terminal_never_touches_host_session(self):
         with mock.patch.dict(os.environ, PLANTED):

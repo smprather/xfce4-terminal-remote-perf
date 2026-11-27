@@ -77,6 +77,10 @@ def run_json(args, display, timeout_s):
         proc.kill()
         out, err = proc.communicate()
         raise XlatError("xlat %s timed out after %.1f s" % (args[0], timeout_s), None, _parse(out))
+    except BaseException:          # e.g. KeyboardInterrupt from the runner's SIGINT/SIGTERM
+        proc.kill()
+        proc.wait()
+        raise
     records = _parse(out)
     if proc.returncode != 0:
         raise XlatError("xlat %s exited %d: %s" % (args[0], proc.returncode,

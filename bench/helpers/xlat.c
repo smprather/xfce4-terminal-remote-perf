@@ -6,7 +6,7 @@
  *   xlat focus --window W
  *   xlat latency --window W --samples N --interval-ms M --timeout-ms T [--require-focus]
  *                                                    (exit 2 when not focused)
- *   xlat damage --window W                           (until SIGTERM/SIGINT)
+ *   xlat damage --window W     ({"ready":..} once armed, then rects until SIGTERM/SIGINT)
  *   xlat pick
  * The display comes from $DISPLAY. Other failures exit 1.
  */
@@ -341,6 +341,7 @@ static int mode_damage(Display *dpy, Window w)
 {
     int ev_base;
     Damage dmg = damage_on(dpy, w, &ev_base);
+    printf("{\"ready\":true,\"t_ns\":%lld}\n", (long long)now_ns());
     while (!g_stop) {
         if (!wait_event(dpy, now_ns() + 100000000LL))
             continue;
