@@ -143,6 +143,27 @@ class ProxyTest(XvfbFixture):
             ms = xlat.latency(self.display, win, samples=6)
         self.assertTrue(all(v is not None and v >= 20.0 for v in ms), ms)
 
+    def test_sub_millisecond_rtt_is_honoured(self):
+        # The real T2 link is ~0.25 ms; an epoll/poll timeout rounds up to whole milliseconds,
+        # which turned 0.25 ms into ~2 ms per round trip.
+        import statistics
+        import time
+        with X11Proxy(self.display, rtt_ms=0.25) as proxy:
+            with socket.create_connection(("127.0.0.1", 6000 + proxy.number), timeout=10) as s:
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.sendall(SETUP_LE)
+                head = _recv_exact(s, 8)
+                _recv_exact(s, 4 * struct.unpack("<H", head[6:8])[0])
+                trips = []
+                for _ in range(50):
+                    t0 = time.monotonic()
+                    s.sendall(core_request(43))                  # GetInputFocus: 32-byte reply
+                    _recv_exact(s, 32)
+                    trips.append((time.monotonic() - t0) * 1000.0)
+        rt = statistics.median(trips)
+        self.assertGreaterEqual(rt, 0.25, trips)
+        self.assertLess(rt, 1.0, trips)
+
     def test_xdpyinfo_through_proxy(self):
         need_tool("xdpyinfo")
         with X11Proxy(self.display) as proxy:

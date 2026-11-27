@@ -233,7 +233,9 @@ class X11Proxy(object):
         self.display = "localhost:%d" % self.number
         self._wake_r, self._wake_w = socket.socketpair()
         self._wake_r.setblocking(False)
-        self._sel = selectors.DefaultSelector()
+        # select() takes a microsecond timeout; epoll and poll round up to whole milliseconds,
+        # which would turn a 0.25 ms RTT into ~2 ms. A proxy holds only a handful of fds.
+        self._sel = selectors.SelectSelector()
         self._sel.register(self._listener, selectors.EVENT_READ, ("listen", None))
         self._sel.register(self._wake_r, selectors.EVENT_READ, ("wake", None))
         self._thread = threading.Thread(target=self._loop, name="x11proxy", daemon=True)
