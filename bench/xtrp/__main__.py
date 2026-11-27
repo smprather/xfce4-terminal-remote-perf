@@ -17,7 +17,7 @@ def _cmd_run(args):
     from xtrp import runner
     try:
         n = runner.run_preset(args.preset, args.build, args.out, iterations=args.iterations,
-                              builds_path=args.builds)
+                              builds_path=args.builds, wms=args.wm)
     except KeyboardInterrupt:
         sys.stderr.write("interrupted; everything started has been stopped\n")
         return 130
@@ -141,6 +141,7 @@ def main(argv=None):
     p.add_argument("--iterations", type=int,
                    help="override every block's iteration count (rounded up to even with several builds)")
     p.add_argument("--builds", help="alternative builds.json")
+    p.add_argument("--wm", action="append", help="replace the preset's window managers (repeatable)")
     p.set_defaults(func=_cmd_run)
 
     p = sub.add_parser("report", help="compare two record directories")

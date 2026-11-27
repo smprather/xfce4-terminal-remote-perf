@@ -119,7 +119,7 @@ class XServer(object):
         else:
             argv = ["Xvnc", ":%d" % n, "-geometry", "%dx%d" % (self.width, self.height),
                     "-depth", str(self.depth), "-SecurityTypes", "None", "-rfbport", str(5900 + n),
-                    "-AlwaysShared"]
+                    "-AlwaysShared", "-localhost"]      # no password, so loopback only
         # -nopn: exit if any listening socket (e.g. the abstract one) is taken, instead of
         # running half-listening while clients reach another server. -displayfd: say when ready.
         return argv + ["-nolisten", "tcp", "-noreset", "-nopn", "-displayfd", str(displayfd)]

@@ -76,6 +76,11 @@ class PresetTest(unittest.TestCase):
         it1 = [(k.workload, k.build) for k, it, _ in runs if it == 1][:2]
         self.assertEqual(it1, [("shell-echo", "b"), ("shell-echo", "a")])
 
+    def test_wm_override_replaces_every_block(self):
+        runs = expand("quick", ["baseline"], wms=["marco-comp"])
+        self.assertEqual(len(runs), ALL11 * 3)
+        self.assertEqual({k.wm for k, _, _ in runs}, {"marco-comp"})
+
     def test_smoke_shrinks_bulk_bytes(self):
         bulk = [r for r in expand("smoke", ["baseline"]) if r[0].workload == "bulk-ascii"]
         self.assertEqual(bulk[0][2], 5 << 20)

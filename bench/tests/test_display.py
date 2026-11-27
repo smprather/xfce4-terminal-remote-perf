@@ -12,6 +12,23 @@ from xtrp.display import WindowManager, XServer, WM_NAMES
 WM_BINARY = {"mutter": "mutter", "marco-comp": "marco", "marco-nocomp": "marco"}
 
 
+def listen_addrs(port):
+    """Hex local addresses (as in /proc/net/tcp{,6}) listening on TCP `port`."""
+    out = []
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path) as f:
+                lines = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            addr, hexport = fields[1].split(":")
+            if int(hexport, 16) == port and fields[3] == "0A":    # 0A = LISTEN
+                out.append(addr)
+    return out
+
+
 class DisplayTest(unittest.TestCase):
 
     def test_each_wm_reports_expected_compositing(self):
@@ -38,6 +55,14 @@ class DisplayTest(unittest.TestCase):
             self.assertEqual(xs.rfb_port, 5900 + xs.number)
             exts = xlat.info(xs.display)["extensions"]
             self.assertTrue({"VNC-EXTENSION", "TIGERVNC"} & set(exts), exts)
+
+    def test_xvnc_listens_on_loopback_only(self):
+        # Xvnc runs with -SecurityTypes None; on the host it must never be reachable from the network
+        need_tool("Xvnc")
+        with XServer("xvnc") as xs:
+            listening = listen_addrs(xs.rfb_port)
+        self.assertTrue(listening, "no listener found for port %d" % xs.rfb_port)
+        self.assertTrue(all(a in ("0100007F", "00000000000000000000000001000000") for a in listening), listening)
 
     def test_stop_leaves_no_lock_or_process(self):
         need_tool("Xvfb")

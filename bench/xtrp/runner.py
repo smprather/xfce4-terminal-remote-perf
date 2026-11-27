@@ -54,7 +54,7 @@ PRESETS = collections.OrderedDict((
 ))
 
 
-def expand(preset, builds, iterations=None):
+def expand(preset, builds, iterations=None, wms=None):
     """[(RunKey, iteration, n_bytes)] for a preset name or a list of preset blocks.
 
     Within a block runs are iteration-major; inside an iteration every workload
@@ -65,6 +65,8 @@ def expand(preset, builds, iterations=None):
     earlier block is not repeated.
     """
     blocks = PRESETS[preset] if isinstance(preset, str) else preset
+    if wms:
+        blocks = [dict(b, wms=list(wms)) for b in blocks]
     seen, runs = set(), []
     for block in blocks:
         configs = []
@@ -276,10 +278,11 @@ def _interrupt(signum, frame):
     raise KeyboardInterrupt("signal %d" % signum)
 
 
-def run_preset(preset, builds, out_dir, iterations=None, builds_path=None):
-    """Run every (key, iteration) of `preset` (a name or a list of blocks); return records written."""
+def run_preset(preset, builds, out_dir, iterations=None, builds_path=None, wms=None):
+    """Run every (key, iteration) of `preset` (a name or a list of blocks); return records written.
+    `wms` replaces every block's window-manager list (e.g. marco-comp on the host)."""
     registry = load_builds(builds_path)
-    runs = expand(preset, builds, iterations)
+    runs = expand(preset, builds, iterations, wms)
     if platform.platform_tag() == "host":
         missing = sorted({k.wm for k, _, _ in runs if not WindowManager.available(k.wm)})
         for wm in missing:
