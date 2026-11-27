@@ -276,6 +276,12 @@ static Damage damage_on(Display *dpy, Window w, int *event_base)
     XSync(dpy, False);
     if (g_xerr)
         die("XDamageCreate failed (bad window?)");
+    /* DamageCreate on a window reports its whole visible area once; that is
+     * not drawing, so drop it before measuring. */
+    while (XPending(dpy)) {
+        XEvent ev;
+        XNextEvent(dpy, &ev);
+    }
     return dmg;
 }
 

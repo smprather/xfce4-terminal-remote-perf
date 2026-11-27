@@ -47,6 +47,16 @@ class XlatTest(XvfbFixture):
         self.assertGreaterEqual(len(tens), 15, rects[:5])
         self.assertTrue(all(isinstance(r["t_ns"], int) for r in rects))
 
+    def test_damage_on_idle_window_reports_nothing(self):
+        # DamageCreate on a window reports its whole visible area once; that is not drawing.
+        win = self.start_testwin(title="idle", delay_ms=0, rect="10x10")
+        proc = subprocess.Popen([xlat.XLAT, "damage", "--window", str(win)],
+                                env=platform.helper_env(self.display), stdout=subprocess.PIPE)
+        time.sleep(0.5)
+        proc.send_signal(signal.SIGTERM)
+        out, _ = proc.communicate(timeout=5)
+        self.assertEqual(out.decode().strip(), "")
+
     def test_wait_window_times_out(self):
         with self.assertRaises(xlat.WindowTimeout):
             xlat.wait_window(self.display, "never-mapped", timeout_ms=200)

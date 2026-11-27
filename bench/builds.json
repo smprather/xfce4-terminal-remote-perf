@@ -1,0 +1,6 @@
+{
+    "baseline": {
+        "exec": "/usr/bin/xfce4-terminal",
+        "env": {}
+    }
+}

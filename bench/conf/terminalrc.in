@@ -1,0 +1,17 @@
+[Configuration]
+FontName=@FONT@
+FontUseSystem=FALSE
+FontAllowBold=TRUE
+MiscCursorBlinks=FALSE
+MiscBell=FALSE
+MiscConfirmClose=FALSE
+MiscShowUnsafePasteDialog=FALSE
+MiscMenubarDefault=FALSE
+MiscToolbarDefault=FALSE
+MiscBordersDefault=TRUE
+ScrollingBar=TERMINAL_SCROLLBAR_NONE
+ScrollingLines=1000
+TitleMode=TERMINAL_TITLE_HIDE
+ColorForeground=#ffffff
+ColorBackground=#000000
+ColorPalette=rgb(0,0,0);rgb(170,0,0);rgb(0,170,0);rgb(170,85,0);rgb(63,58,254);rgb(170,0,170);rgb(0,170,170);rgb(170,170,170);rgb(85,85,85);rgb(255,85,85);rgb(85,255,85);rgb(255,255,85);rgb(92,92,213);rgb(255,85,255);rgb(85,255,255);rgb(255,255,255)

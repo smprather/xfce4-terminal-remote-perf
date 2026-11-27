@@ -48,13 +48,13 @@ def pick_display(exclude=()):
     raise XServerStartError("no free display in :%d..:%d" % (DISPLAY_RANGE[0], DISPLAY_RANGE[-1]))
 
 
-def _spawn(argv, env, log_path, pass_fds=()):
+def spawn(argv, env, log_path, pass_fds=()):
     with open(log_path, "ab") as log:
         return subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                 pass_fds=pass_fds, start_new_session=True)
 
 
-def _exited(proc):
+def exited(proc):
     """True once the leader has exited; does not reap it (its pid stays reserved)."""
     if proc.returncode is not None:
         return True
@@ -74,7 +74,7 @@ def stop_group(proc, grace_s=5.0):
         return
     _killpg(proc.pid, signal.SIGTERM)
     deadline = time.monotonic() + grace_s
-    while not _exited(proc) and time.monotonic() < deadline:
+    while not exited(proc) and time.monotonic() < deadline:
         time.sleep(0.02)
     _killpg(proc.pid, signal.SIGKILL)
     proc.wait()
@@ -127,7 +127,7 @@ class XServer(object):
                 break
         if got.strip() != str(n).encode():
             return False
-        while time.monotonic() < deadline and not _exited(proc):
+        while time.monotonic() < deadline and not exited(proc):
             try:
                 xlat.info(":%d" % n)
                 return True
@@ -157,7 +157,7 @@ class XServer(object):
             log_path = os.path.join(self._workdir, "server-%d.log" % n)
             read_fd, write_fd = os.pipe()
             try:
-                proc = _spawn(self._argv(n, write_fd), platform.child_env(":%d" % n, self._workdir),
+                proc = spawn(self._argv(n, write_fd), platform.child_env(":%d" % n, self._workdir),
                               log_path, pass_fds=(write_fd,))
             finally:
                 os.close(write_fd)
@@ -218,11 +218,11 @@ class WindowManager(object):
             return self
         self._workdir = tempfile.mkdtemp(prefix="xtrp-wm-")
         log_path = os.path.join(self._workdir, "wm.log")
-        self._proc = _spawn(self._argv(), platform.child_env(self.display, self._workdir), log_path)
+        self._proc = spawn(self._argv(), platform.child_env(self.display, self._workdir), log_path)
         want_cm = self.name in ("mutter", "marco-comp")
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            if _exited(self._proc):
+            if exited(self._proc):
                 tail = _tail(log_path)
                 self.stop()
                 raise WmStartError("%s exited during startup:\n%s" % (self.name, tail))
