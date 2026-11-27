@@ -1,0 +1,25 @@
+# xtrp bench image, EL8. Baseline = EPEL8 xfce4-terminal 1.0.4 + AppStream vte291 0.52.4.
+FROM almalinux:8.10
+
+RUN dnf -y -q install epel-release dnf-plugins-core \
+    && dnf config-manager --set-enabled powertools \
+    && dnf -y -q install \
+        xfce4-terminal-1.0.4-1.el8 vte291 \
+        xorg-x11-server-Xvfb tigervnc-server-minimal xdotool xorg-x11-utils xorg-x11-xauth \
+        mutter marco \
+        mesa-dri-drivers dbus-daemon dbus-tools \
+        dejavu-sans-mono-fonts fontconfig \
+        python36 \
+        gcc libX11-devel libXtst-devel libXdamage-devel libXfixes-devel libXext-devel \
+        make bison libevent-devel ncurses-devel \
+        procps-ng unzip xz bzip2 diffutils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+COPY pins.json image/install-pinned.sh /tmp/xtrp-image/
+RUN sh /tmp/xtrp-image/install-pinned.sh /tmp/xtrp-image/pins.json \
+    && rm -rf /tmp/xtrp-image \
+    && dbus-uuidgen > /etc/machine-id \
+    && mkdir -m 1777 /tmp/xtrp-home
+
+ENV LANG=C.UTF-8

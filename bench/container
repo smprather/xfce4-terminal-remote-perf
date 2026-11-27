@@ -1,0 +1,43 @@
+#!/bin/sh
+# Run a command inside the xtrp bench container.
+#   bench/container [--el 8|9] <cmd...>        (default --el 8)
+# The image xtrp-bench:el<N> is (re)built from bench/image/Dockerfile.el<N>
+# first; with a warm cache that is a no-op. The run has no network unless
+# XTRP_NET=1 (pin refreshes, debugging).
+set -eu
+
+el=8
+if [ "${1:-}" = "--el" ]; then
+    el=${2:-}
+    shift 2 || true
+fi
+case "$el" in
+    8|9) ;;
+    *) echo "bench/container: --el must be 8 or 9" >&2; exit 2 ;;
+esac
+if [ $# -eq 0 ]; then
+    echo "usage: bench/container [--el 8|9] <cmd...>" >&2
+    exit 2
+fi
+
+root=$(cd "$(dirname "$0")/.." && pwd -P)
+image="xtrp-bench:el$el"
+
+docker build -q -t "$image" -f "$root/bench/image/Dockerfile.el$el" "$root/bench" >/dev/null
+
+net=none
+if [ "${XTRP_NET:-0}" = 1 ]; then
+    net=host
+fi
+
+tty=""
+if [ -t 0 ] && [ -t 1 ]; then
+    tty="-it"
+fi
+
+# shellcheck disable=SC2086
+exec docker run --rm --init --network "$net" $tty \
+    -v "$root:/work" -w /work \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp/xtrp-home -e USER=xtrp -e LOGNAME=xtrp \
+    "$image" "$@"

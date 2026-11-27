@@ -1,0 +1,51 @@
+#!/bin/sh
+# Host (CachyOS/Arch) prerequisite check for running xtrp natively.
+# Prints one `pacman -S --needed ...` line covering everything missing.
+# Exits 1 only when a required tool or header is missing; mutter and marco
+# are optional (host runs drop WMs that are not installed).
+set -u
+
+missing_req=""
+missing_opt=""
+
+need() {  # need <command> <pacman package>
+    command -v "$1" >/dev/null 2>&1 || missing_req="$missing_req $2"
+}
+
+want() {  # want <command> <pacman package>
+    command -v "$1" >/dev/null 2>&1 || missing_opt="$missing_opt $2"
+}
+
+need_header() {  # need_header <path under /usr/include> <pacman package>
+    [ -f "/usr/include/$1" ] || missing_req="$missing_req $2"
+}
+
+need Xvfb xorg-server-xvfb
+need Xvnc tigervnc
+need xdotool xdotool
+need xprop xorg-xprop
+need xdpyinfo xorg-xdpyinfo
+need dbus-run-session dbus
+need gcc gcc
+need nvim neovim
+need tmux tmux
+need xfce4-terminal xfce4-terminal
+need_header X11/Xlib.h libx11
+need_header X11/extensions/XTest.h libxtst
+need_header X11/extensions/Xdamage.h libxdamage
+need_header X11/extensions/Xfixes.h libxfixes
+need_header X11/extensions/shape.h libxext
+want mutter mutter
+want marco marco
+
+if [ -z "$missing_req$missing_opt" ]; then
+    echo "selftest-host: OK"
+    exit 0
+fi
+
+echo "selftest-host: missing:$missing_req${missing_opt:+ (optional:$missing_opt)}"
+echo "  ! sudo pacman -S --needed$missing_req$missing_opt"
+if [ -n "$missing_req" ]; then
+    exit 1
+fi
+exit 0

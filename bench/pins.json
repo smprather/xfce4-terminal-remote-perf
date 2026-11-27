@@ -1,0 +1,17 @@
+{
+    "nvim": {
+        "version": "v0.12.5",
+        "url": "https://github.com/neovim/neovim-releases/releases/download/v0.12.5/nvim-linux-x86_64.tar.gz",
+        "sha256": "9e4a0e9c2aebbcf1eb5f6cdf645b460c9249f517650d0191170f9f152ecfd721"
+    },
+    "tmux": {
+        "version": "3.5a",
+        "url": "https://github.com/tmux/tmux/releases/download/3.5a/tmux-3.5a.tar.gz",
+        "sha256": "16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951"
+    },
+    "nerd-font-caskaydia": {
+        "version": "v3.5.1",
+        "url": "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/CascadiaCode.zip",
+        "sha256": "1298bf92698afa06185cf1d05e6ae05f2d8a1e8c3cb45ddf4c3035168ab342a1"
+    }
+}

@@ -1,0 +1,25 @@
+# xtrp bench image, EL9. Baseline = EPEL9 xfce4-terminal 1.0.4 + AppStream vte291 0.64.2.
+FROM almalinux:9
+
+RUN dnf -y -q install epel-release dnf-plugins-core \
+    && dnf config-manager --set-enabled crb \
+    && dnf -y -q install \
+        xfce4-terminal-1.0.4-1.el9 vte291 \
+        xorg-x11-server-Xvfb tigervnc-server-minimal xdotool xprop xdpyinfo xwininfo xorg-x11-xauth \
+        mutter marco \
+        mesa-dri-drivers dbus-daemon dbus-tools \
+        dejavu-sans-mono-fonts fontconfig \
+        python3 \
+        gcc libX11-devel libXtst-devel libXdamage-devel libXfixes-devel libXext-devel \
+        make bison libevent-devel ncurses-devel \
+        procps-ng unzip xz bzip2 diffutils \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+COPY pins.json image/install-pinned.sh /tmp/xtrp-image/
+RUN sh /tmp/xtrp-image/install-pinned.sh /tmp/xtrp-image/pins.json \
+    && rm -rf /tmp/xtrp-image \
+    && dbus-uuidgen > /etc/machine-id \
+    && mkdir -m 1777 /tmp/xtrp-home
+
+ENV LANG=C.UTF-8

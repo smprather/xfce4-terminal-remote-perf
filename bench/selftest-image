@@ -1,0 +1,68 @@
+#!/bin/sh
+# Bench image self-test. Runs inside xtrp-bench:el8 or xtrp-bench:el9 and exits
+# non-zero on the first failure.
+#   bench/container bench/selftest-image
+#   bench/container --el 9 bench/selftest-image
+set -u
+
+fail() {
+    echo "selftest-image: FAIL: $*" >&2
+    exit 1
+}
+
+. /etc/os-release
+major=${VERSION_ID%%.*}
+case "$major" in
+    8)
+        term_want=xfce4-terminal-1.0.4-1.el8.x86_64
+        vte_want=vte291-0.52.4
+        py_want="(3, 6)"
+        ;;
+    9)
+        term_want=xfce4-terminal-1.0.4-1.el9.x86_64
+        vte_want=vte291-0.64.2
+        py_want="(3, 9)"
+        ;;
+    *)
+        fail "unexpected VERSION_ID=$VERSION_ID"
+        ;;
+esac
+
+got=$(rpm -q xfce4-terminal) || fail "xfce4-terminal is not installed"
+[ "$got" = "$term_want" ] || fail "xfce4-terminal is $got, want $term_want"
+
+got=$(rpm -q vte291) || fail "vte291 is not installed"
+case "$got" in
+    "$vte_want"*) ;;
+    *) fail "vte291 is $got, want $vte_want*" ;;
+esac
+
+got=$(python3 -c 'import sys; print(tuple(sys.version_info[:2]))') || fail "python3 does not run"
+[ "$got" = "$py_want" ] || fail "python3 is $got, want $py_want"
+
+for t in /usr/bin/xfce4-terminal Xvfb Xvnc mutter marco xdotool xprop xdpyinfo \
+         dbus-run-session /opt/nvim/bin/nvim /usr/local/bin/tmux; do
+    command -v "$t" >/dev/null 2>&1 || fail "missing tool: $t"
+done
+
+v=$(/opt/nvim/bin/nvim --version 2>&1 | head -1)
+case "$v" in
+    "NVIM v0."[0-9]*)
+        minor=$(echo "$v" | sed -n 's/^NVIM v0\.\([0-9][0-9]*\).*/\1/p')
+        [ "${minor:-0}" -ge 11 ] || fail "nvim is too old: $v"
+        ;;
+    "NVIM v"[1-9]*)
+        ;;
+    *)
+        fail "nvim does not run: $v"
+        ;;
+esac
+
+got=$(/usr/local/bin/tmux -V 2>&1)
+[ "$got" = "tmux 3.5a" ] || fail "tmux -V printed '$got', want 'tmux 3.5a'"
+
+for fam in "CaskaydiaCove Nerd Font Mono" "DejaVu Sans Mono"; do
+    fc-list : family | grep -q "$fam" || fail "font family missing: $fam"
+done
+
+echo "selftest-image: OK ($PRETTY_NAME)"
