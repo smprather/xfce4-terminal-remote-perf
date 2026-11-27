@@ -95,6 +95,13 @@ class DamageWatch(object):
                 self.area_px += rec["w"] * rec["h"]
                 self.last_event_t = rec["t_ns"] / 1e9
 
+    def reset(self):
+        """Zero the counters (start of the measured phase)."""
+        with self._lock:
+            self.events = 0
+            self.area_px = 0
+            self.last_event_t = None
+
     def wait_quiet(self, quiet_ms=300, cap_s=10.0):
         """Block until no damage for `quiet_ms` (counted from this call at the earliest).
         Returns False if `cap_s` passed first."""

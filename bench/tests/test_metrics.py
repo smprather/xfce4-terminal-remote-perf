@@ -53,6 +53,19 @@ class DamageWatchTest(XvfbFixture):
         self.assertGreater(st["events"], 5)
         self.assertEqual(st["area_px"], 100 * st["events"])
 
+    def test_reset_zeroes_the_counters(self):
+        win = self.start_testwin(title="busy2", delay_ms=0, rect="10x10", damage_forever=True)
+        dw = DamageWatch(self.display, win).start()
+        try:
+            time.sleep(0.4)
+            self.assertGreater(dw.events, 3)
+            dw.reset()
+            self.assertEqual((dw.events, dw.area_px, dw.last_event_t), (0, 0, None))
+            time.sleep(0.3)
+        finally:
+            st = dw.stop()
+        self.assertLess(st["events"], 10)
+
     def test_idle_window_goes_quiet(self):
         win = self.start_testwin(title="calm", delay_ms=0, rect="10x10")
         dw = DamageWatch(self.display, win).start()

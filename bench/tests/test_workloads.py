@@ -155,6 +155,30 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(ev[1]["bytes"], 65536)
         self.assertIn("term_cpu_s", ev[1])  # null here: no xfce4-terminal ancestor
 
+    def test_payload_waits_for_the_go_file(self):
+        go = os.path.join(self.tmp, "go")
+        env = dict(os.environ, PYTHONPATH=BENCH)
+        with open(os.devnull, "wb") as null:
+            proc = subprocess.Popen([sys.executable, "-m", "xtrp", "workload", "bulk-ascii", "--bytes", "4096",
+                                     "--status", self.status, "--go", go, "--exit"], stdout=null, env=env)
+            try:
+                time.sleep(0.7)
+                self.assertFalse(os.path.exists(self.status) and read_status(self.status))
+                open(go, "w").close()
+                proc.wait(timeout=30)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual([e["event"] for e in read_status(self.status)], ["start", "end"])
+
+    def test_throughput_commands_carry_the_go_path(self):
+        ctx = WorkloadCtx(status_path=self.status, workdir=self.tmp)
+        for name, w in sorted(WORKLOADS.items()):
+            argv = w.command(ctx)
+            if w.kind == "throughput":
+                self.assertIn(ctx.go_path, " ".join(argv), name)
+
     def test_fullscreen_redraw_uses_alt_screen(self):
         ev = self.run_payload("fullscreen-redraw", "--seconds", "0.2", "--cols", "40", "--rows", "10")
         self.assertEqual(ev[1]["event"], "end")
@@ -184,6 +208,8 @@ class WorkloadInTerminalTest(unittest.TestCase):
                         WORKLOADS[name].command(ctx), self.tmp).start()
         self.addCleanup(cleanup, ctx)
         self.addCleanup(term.stop)
+        time.sleep(0.3)
+        open(ctx.go_path, "w").close()          # what the runner does once startup has settled
         deadline = time.monotonic() + timeout_s
         events = []
         while time.monotonic() < deadline:

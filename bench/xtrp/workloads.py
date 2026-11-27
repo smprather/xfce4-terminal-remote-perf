@@ -243,6 +243,7 @@ class WorkloadCtx(object):
         self.cols = cols
         self.rows = rows
         self.n_bytes = n_bytes
+        self.go_path = os.path.join(workdir, "go")      # throughput payloads start when this exists
         self.tmux_socket = "xtrp-%d-%d" % (os.getpid(), next(_socket_counter))
 
 
@@ -260,7 +261,8 @@ def _env_prefix(ctx, *assignments):
 
 def _payload(ctx, name, *extra):
     return (_env_prefix(ctx, "PYTHONPATH=" + _BENCH)
-            + [sys.executable, "-m", "xtrp", "workload", name, "--status", ctx.status_path] + list(extra))
+            + [sys.executable, "-m", "xtrp", "workload", name, "--status", ctx.status_path,
+               "--go", ctx.go_path] + list(extra))
 
 
 def _nvim():
@@ -381,15 +383,28 @@ def _redraw_frames(cols, rows, seconds, sync):
     return frames, total
 
 
+def _await_go(go, timeout_s=600.0):
+    """Block until the runner creates the go file (startup has settled), if one was given."""
+    if not go:
+        return
+    deadline = time.monotonic() + timeout_s
+    while not os.path.exists(go) and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+
 def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, rows=40, steps=None,
-                exit_after=False):
-    """The in-terminal side of a throughput workload. Sleeps forever afterwards unless exit_after."""
+                exit_after=False, go=None):
+    """The in-terminal side of a throughput workload. Sleeps forever afterwards unless exit_after.
+
+    The data is generated first; the start event and the writing wait for the go file."""
     sync = os.environ.get("XTRP_SYNC") == "1"
     if name == "nvim-scroll":
         src = os.path.join(os.path.dirname(os.path.abspath(status)), "xtrp-scroll.c")
         with open(src, "w") as f:
             f.write(gen_source_file())
         env = dict(os.environ, XTRP_STATUS=status)
+        if go:
+            env["XTRP_GO"] = go
         lua = "lua vim.defer_fn(function() XtrpScroll(%d) end, 300)" % (steps or SCROLL_STEPS)
         os.execvpe(_nvim(), [_nvim(), "-u", NVIM_INIT, "-i", "NONE", "-n", src, "-c", lua], env)
     extra = {}
@@ -401,6 +416,7 @@ def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, 
         data = None
     else:
         raise SystemExit("xtrp workload: %s has no payload side" % name)
+    _await_go(go)
     c0 = term_cpu_s()
     _emit(status, {"event": "start", "t": time.monotonic()})
     if data is None:

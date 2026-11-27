@@ -65,6 +65,14 @@ class PresetTest(unittest.TestCase):
                 keys.add((k, it))
             self.assertEqual(len(keys), len(runs), preset)       # no duplicate (key, iteration)
 
+    def test_builds_run_back_to_back_and_alternate_order(self):
+        runs = expand("quick", ["a", "b"])
+        first = [(k.workload, k.build, it) for k, it, _ in runs[:4]]
+        self.assertEqual(first, [("shell-echo", "a", 0), ("shell-echo", "b", 0),
+                                 ("nvim-type", "a", 0), ("nvim-type", "b", 0)])
+        it1 = [(k.workload, k.build) for k, it, _ in runs if it == 1][:2]
+        self.assertEqual(it1, [("shell-echo", "b"), ("shell-echo", "a")])
+
     def test_smoke_shrinks_bulk_bytes(self):
         bulk = [r for r in expand("smoke", ["baseline"]) if r[0].workload == "bulk-ascii"]
         self.assertEqual(bulk[0][2], 5 << 20)

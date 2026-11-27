@@ -9,7 +9,7 @@ import time
 def _cmd_workload(args):
     from xtrp import workloads
     workloads.run_payload(args.name, args.status, n_bytes=args.bytes, lines=args.lines, seconds=args.seconds,
-                          cols=args.cols, rows=args.rows, steps=args.steps, exit_after=args.exit)
+                          cols=args.cols, rows=args.rows, steps=args.steps, exit_after=args.exit, go=args.go)
     return 0
 
 
@@ -129,6 +129,7 @@ def main(argv=None):
     p.add_argument("--cols", type=int, default=120)
     p.add_argument("--rows", type=int, default=40)
     p.add_argument("--steps", type=int)
+    p.add_argument("--go", help="wait for this file to exist before starting (set by the runner)")
     p.add_argument("--exit", action="store_true", help="return after the end event (tests)")
     p.set_defaults(func=_cmd_workload)
 

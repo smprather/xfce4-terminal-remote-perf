@@ -12,6 +12,7 @@ pcall(function() vim.o.termsync = (os.getenv("XTRP_SYNC") == "1") end)
 
 local uv = vim.uv or vim.loop
 local status_path = os.getenv("XTRP_STATUS")
+local go_path = os.getenv("XTRP_GO")
 local clk_tck = tonumber((vim.fn.system({ "getconf", "CLK_TCK" }) or ""):match("%d+")) or 100
 
 -- (comm, ppid, utime+stime ticks) of a pid, from /proc/<pid>/stat
@@ -76,6 +77,9 @@ end
 
 -- nvim-scroll workload: n steps of <C-e> + redraw, bracketed by status events.
 function XtrpScroll(n)
+  if go_path then -- the runner creates it once startup has settled
+    vim.wait(600000, function() return uv.fs_stat(go_path) ~= nil end, 5)
+  end
   local ctrl_e = vim.api.nvim_replace_termcodes("<C-e>", true, false, true)
   local c0 = term_cpu()
   emit({ event = "start", t = uv.hrtime() / 1e9 })

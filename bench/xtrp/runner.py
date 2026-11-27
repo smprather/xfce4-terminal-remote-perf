@@ -2,7 +2,9 @@
 
 One X server + WM (+ RFB client, + X11 proxy) is set up per group of runs
 sharing (display_kind, wm, vnc_encoding, rtt_ms) and reused; every run gets a
-fresh terminal. Cleanup is an ExitStack per group and per run, and SIGTERM is
+fresh terminal. Workload-phase metrics (damage, CPU, VNC and X11 traffic) are
+counted only after startup has settled; throughput payloads wait on a go file
+until then. startup_ms and startup_x11_replies cover the launch. Cleanup is an ExitStack per group and per run, and SIGTERM is
 turned into KeyboardInterrupt, so every resource stops on any exit path.
 """
 
@@ -55,29 +57,36 @@ PRESETS = collections.OrderedDict((
 def expand(preset, builds, iterations=None):
     """[(RunKey, iteration, n_bytes)] for a preset name or a list of preset blocks.
 
-    A key already produced by an earlier block is not repeated. Within a block,
-    runs are ordered iteration-major so builds and workloads interleave over time.
+    Within a block runs are iteration-major; inside an iteration every workload
+    configuration runs once per build, back to back, and the build order flips
+    on odd iterations (A B, B A, ...), so drift within a session cannot favour
+    one build. A key already produced by an earlier block is not repeated.
     """
     blocks = PRESETS[preset] if isinstance(preset, str) else preset
     seen, runs = set(), []
     for block in blocks:
-        keys = []
+        configs = []
         for disp in block["displays"]:
             encodings = [None] if disp == "xvfb" else block.get("vnc_encodings", ["tight"])
             rtts = block.get("rtts", [0.25]) if disp == "xvnc+x11remote" else [None]
             for enc in encodings:
                 for rtt in rtts:
                     for wm in block["wms"]:
-                        for build in builds:
-                            for size in block["sizes"]:
-                                for font in block["fonts"]:
-                                    for wl in block["workloads"]:
-                                        k = RunKey(build, disp, wm, rtt, enc, size, font, "default", wl)
-                                        if k not in seen:
-                                            seen.add(k)
-                                            keys.append(k)
+                        for size in block["sizes"]:
+                            for font in block["fonts"]:
+                                for wl in block["workloads"]:
+                                    configs.append((disp, wm, rtt, enc, size, font, wl))
+        block_keys = set()
         for it in range(iterations or block["iterations"]):
-            runs.extend((k, it, block.get("n_bytes")) for k in keys)
+            order = list(builds) if it % 2 == 0 else list(reversed(builds))
+            for disp, wm, rtt, enc, size, font, wl in configs:
+                for build in order:
+                    k = RunKey(build, disp, wm, rtt, enc, size, font, "default", wl)
+                    if k in seen:
+                        continue
+                    block_keys.add(k)
+                    runs.append((k, it, block.get("n_bytes")))
+        seen |= block_keys
     return runs
 
 
@@ -121,10 +130,7 @@ class _Context(object):
                 "metrics": metrics, "flags": flags}
 
 
-def _measure_latency(term, xs, dw, rfb, metrics, flags):
-    xlat.focus(xs.display, term.window)
-    if not dw.wait_quiet(QUIET_MS, SETTLE_CAP_S):
-        flags["drain_timeout"] = True
+def _measure_latency(term, xs, rfb, metrics):
     cpu0 = proc_cpu_s(term.pid)
     metrics["latency_ms"] = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS)
     if rfb is not None:
@@ -187,20 +193,30 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             _park_pointer(xs.display)
             if rfb is not None:
                 rfb.reset_stats()
-            x11_0 = proxy.stats() if proxy is not None else None
-            xcpu0 = proc_cpu_s(xs.pid)
+            x11_launch = proxy.stats() if proxy is not None else None
             term = Terminal(build, proxy.display if proxy is not None else xs.display, key.size, key.font,
                             wl.command(ctx), workdir, xlat_display=xs.display)
             term.start()
             stack.callback(term.stop)
             metrics["startup_ms"] = term.startup_ms
             if proxy is not None:
-                metrics["startup_x11_replies"] = proxy.stats()["replies"] - x11_0["replies"]
+                metrics["startup_x11_replies"] = proxy.stats()["replies"] - x11_launch["replies"]
             dw = DamageWatch(xs.display, term.window).start()
             stack.callback(dw.stop)
+            xlat.focus(xs.display, term.window)
+            # Let startup (and nvim/tmux's first screen) finish painting; throughput payloads are
+            # parked on the go file meanwhile. Workload-phase metrics start from here.
+            if not dw.wait_quiet(QUIET_MS, SETTLE_CAP_S):
+                flags["drain_timeout"] = True
+            if rfb is not None:
+                rfb.reset_stats()
+            x11_0 = proxy.stats() if proxy is not None else None
+            xcpu0 = proc_cpu_s(xs.pid)
+            dw.reset()
             if wl.kind == "latency":
-                _measure_latency(term, xs, dw, rfb, metrics, flags)
+                _measure_latency(term, xs, rfb, metrics)
             else:
+                open(ctx.go_path, "w").close()
                 _measure_throughput(term, dw, ctx, wl, metrics, flags)
             dmg = dw.stop()
             metrics["damage_events"] = dmg["events"]
