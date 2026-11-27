@@ -40,25 +40,30 @@ def need_tool(name):
 
 
 class XvfbFixture(unittest.TestCase):
-    """Starts a private Xvfb (1024x768x24) per test; tracks testwin processes."""
+    """Starts a private X server (1024x768x24; Xvfb unless server_kind says xvnc) per test;
+    tracks testwin processes."""
+
+    server_kind = "xvfb"
 
     def setUp(self):
-        need_tool("Xvfb")
+        need_tool({"xvfb": "Xvfb", "xvnc": "Xvnc"}[self.server_kind])
         self.tmp = tempfile.mkdtemp(prefix="xtrp-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self._testwins = {}
-        self._xserver = XServer("xvfb", 1024, 768, 24).start()
+        self._xserver = XServer(self.server_kind, 1024, 768, 24).start()
+        self.xserver = self._xserver
         self.display = self._xserver.display
         self.display_number = self._xserver.number
         self.addCleanup(self._stop_all)
 
-    def start_testwin(self, title, delay_ms, rect, damage_forever=False):
+    def start_testwin(self, title, delay_ms, rect, damage_forever=False, display=None):
+        """Start testwin (connected to `display`, default the fixture's server); return its window."""
         argv = [os.path.join(xlat.BIN_DIR, "testwin"), "--title", title,
                 "--delay-ms", str(delay_ms), "--rect", rect]
         if damage_forever:
             argv.append("--damage-forever")
         xlat.ensure_built()
-        proc = subprocess.Popen(argv, env=platform.child_env(self.display, self.tmp),
+        proc = subprocess.Popen(argv, env=platform.child_env(display or self.display, self.tmp),
                                 stdout=subprocess.PIPE, start_new_session=True)
         window, _ = xlat.wait_window(self.display, title, timeout_ms=10000)
         self._testwins[window] = proc
