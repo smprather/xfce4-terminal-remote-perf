@@ -40,10 +40,16 @@ bench/selftest-host                           # host prerequisites; prints the p
 bench/test-all                                # unit + integration tests on el8, el9 and the host
 
 # measure: presets smoke | quick | full | rtt-sweep; builds come from bench/builds.json
-bench/container python3 -m xtrp run --preset quick --build baseline --out results/raw/q1
-bench/container python3 -m xtrp report results/raw/q1 results/raw/q2    # exit 1 on a regression
+bench/container python3 -m xtrp run --preset quick --build baseline --build candidate --out results/raw/ab
+bench/container python3 -m xtrp report results/raw/ab results/raw/ab \
+    --base-build baseline --cand-build candidate                       # exit 1 on a regression
 PYTHONPATH=bench python3 -m xtrp run --preset smoke --build baseline --out results/raw/host-smoke   # on the host
 ```
+
+Always run the baseline and the candidate interleaved in one invocation, as above. Separate
+invocations differ by 10-17% in startup time alone (session drift on a shared machine), so
+comparing them would flag noise. `baseline-twin` (the same binary under another name) measures
+the remaining noise.
 
 The rules that keep the harness safe on the host:
 

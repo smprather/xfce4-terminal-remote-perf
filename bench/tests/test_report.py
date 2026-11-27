@@ -92,6 +92,15 @@ class CompareTest(unittest.TestCase):
         for m in ("total_s", "latency_ms", "vnc_bytes", "damage_area_px", "term_cpu_s"):
             self.assertEqual(METRIC_DIRECTION[m], -1, m)
 
+    def test_damage_area_gated_for_latency_but_not_throughput(self):
+        # bulk output: area = frames x window, so one frame of phase is ~6%; per keystroke it is an outcome
+        rows = compare([rec("b", {"damage_area_px": 3.2e7}, workload="box-drawing"),
+                        rec("b", {"damage_area_px": 25000}, workload="shell-echo")],
+                       [rec("c", {"damage_area_px": 3.4e7}, workload="box-drawing"),
+                        rec("c", {"damage_area_px": 50000}, workload="shell-echo")])
+        self.assertFalse(row(rows, "damage_area_px", workload="box-drawing")["regression"])
+        self.assertTrue(row(rows, "damage_area_px", workload="shell-echo")["regression"])
+
     def test_unknown_metric_is_informational(self):
         r = row(compare([rec("b", {"made_up": 1.0})], [rec("c", {"made_up": 100.0})]), "made_up")
         self.assertFalse(r["regression"])

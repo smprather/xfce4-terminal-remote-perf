@@ -29,6 +29,22 @@ METRIC_DIRECTION.update({
 })
 
 
+
+
+def direction(metric, workload):
+    """METRIC_DIRECTION, except that damage_area_px is informational for throughput workloads:
+    during bulk output it is frames x window area, so one frame of phase moves it ~6%."""
+    if metric == "damage_area_px" and _kind(workload) == "throughput":
+        return 0
+    return METRIC_DIRECTION.get(metric, 0)
+
+
+def _kind(workload):
+    from xtrp.workloads import WORKLOADS
+    w = WORKLOADS.get(workload)
+    return w.kind if w else None
+
+
 class PlatformMismatch(ValueError):
     def __init__(self, base_tags, cand_tags):
         self.base_tags, self.cand_tags = base_tags, cand_tags
@@ -61,11 +77,11 @@ def _judge(row, metric, threshold_pct, cross_platform):
         if c != 0:
             row["note"] = "base median 0"
         return
-    direction = METRIC_DIRECTION.get(metric, 0)
+    sign = direction(metric, row["key"]["workload"])
     change = (c - b) / abs(b) * 100.0
-    row["delta_pct"] = -change if direction < 0 else change
+    row["delta_pct"] = -change if sign < 0 else change
     row["noise_pct"] = 100.0 * (row["base"]["p90"] - row["base"]["p10"]) / abs(b)
-    if direction != 0 and not cross_platform:
+    if sign != 0 and not cross_platform:
         row["regression"] = row["delta_pct"] < -max(threshold_pct, row["noise_pct"])
 
 

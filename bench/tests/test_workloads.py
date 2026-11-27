@@ -205,6 +205,9 @@ class WorkloadInTerminalTest(unittest.TestCase):
         _, _, ev = self.run_in_terminal("nvim-scroll", 120)
         self.assertEqual([e["event"] for e in ev], ["start", "end"], ev)
         self.assertGreater(ev[1]["t"], ev[0]["t"])
+        # CPU comes from schedstat (ns), not 10 ms ticks: not an exact multiple of 1/CLK_TCK
+        ticks = ev[1]["term_cpu_s"] * os.sysconf("SC_CLK_TCK")
+        self.assertGreater(abs(ticks - round(ticks)), 1e-6, ev[1]["term_cpu_s"])
 
     def test_tmux_bulk_split_runs_and_cleanup_stops_its_server(self):
         need_tool("tmux")
