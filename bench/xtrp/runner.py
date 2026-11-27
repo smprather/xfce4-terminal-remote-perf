@@ -60,7 +60,9 @@ def expand(preset, builds, iterations=None):
     Within a block runs are iteration-major; inside an iteration every workload
     configuration runs once per build, back to back, and the build order flips
     on odd iterations (A B, B A, ...), so drift within a session cannot favour
-    one build. A key already produced by an earlier block is not repeated.
+    one build; with more than one build the iteration count is rounded up to
+    even so each build goes first equally often. A key already produced by an
+    earlier block is not repeated.
     """
     blocks = PRESETS[preset] if isinstance(preset, str) else preset
     seen, runs = set(), []
@@ -77,7 +79,10 @@ def expand(preset, builds, iterations=None):
                                 for wl in block["workloads"]:
                                     configs.append((disp, wm, rtt, enc, size, font, wl))
         block_keys = set()
-        for it in range(iterations or block["iterations"]):
+        n_iter = iterations or block["iterations"]
+        if len(builds) > 1 and n_iter % 2:
+            n_iter += 1          # balanced A-B / B-A order needs an even count
+        for it in range(n_iter):
             order = list(builds) if it % 2 == 0 else list(reversed(builds))
             for disp, wm, rtt, enc, size, font, wl in configs:
                 for build in order:

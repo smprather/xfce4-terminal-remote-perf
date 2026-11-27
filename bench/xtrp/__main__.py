@@ -138,7 +138,8 @@ def main(argv=None):
     p.add_argument("--preset", required=True, choices=list(PRESETS))
     p.add_argument("--build", action="append", required=True, help="build name from builds.json (repeatable)")
     p.add_argument("--out", required=True, help="output directory, e.g. results/raw/<stamp>")
-    p.add_argument("--iterations", type=int, help="override every block's iteration count")
+    p.add_argument("--iterations", type=int,
+                   help="override every block's iteration count (rounded up to even with several builds)")
     p.add_argument("--builds", help="alternative builds.json")
     p.set_defaults(func=_cmd_run)
 

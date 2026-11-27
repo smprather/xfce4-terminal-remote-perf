@@ -52,7 +52,10 @@ class PresetTest(unittest.TestCase):
         # main block: (xvfb + xvnc*2 enc + x11remote*2 enc) * 4 WMs * 11 * 7, plus the sensitivity
         # block's 4 size/font combos minus the one already in the main block, * 11 * 5
         self.assertEqual(len(expand("full", ["baseline"])), 5 * 4 * ALL11 * 7 + 3 * ALL11 * 5)
-        self.assertEqual(len(expand("quick", ["baseline", "other"], iterations=1)), 2 * ALL11)
+        # comparing builds: iteration counts round up to even so A-B / B-A order is balanced
+        self.assertEqual(len(expand("quick", ["baseline", "other"])), 2 * ALL11 * 4)
+        self.assertEqual(len(expand("quick", ["baseline", "other"], iterations=1)), 2 * ALL11 * 2)
+        self.assertEqual(len(expand("quick", ["baseline"], iterations=1)), ALL11)
 
     def test_keys_follow_the_rules(self):
         for preset in PRESETS:
