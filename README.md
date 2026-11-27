@@ -12,7 +12,9 @@ CPU-only, 2D techniques; no GPU.
 
 Plan 1 (measurement harness and baselines) is implemented; see
 [`docs/superpowers/plans/2026-11-25-plan-1-measurement-harness.md`](docs/superpowers/plans/2026-11-25-plan-1-measurement-harness.md).
-Baseline numbers are in [`results/summary/`](results/summary/). The design is
+Baseline numbers are in [`results/summary/2026-11-27-baseline.md`](results/summary/2026-11-27-baseline.md):
+on EL8, VTE 0.52's ~25.6 ms key-to-paint time dominates typing latency on every display, and bulk
+output runs at 11-36 MB/s with no scroll-by-copy. The design is
 [`docs/superpowers/specs/2026-11-25-remote-display-performance-design.md`](docs/superpowers/specs/2026-11-25-remote-display-performance-design.md).
 
 Plan in brief:
