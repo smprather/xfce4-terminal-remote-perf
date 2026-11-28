@@ -138,7 +138,6 @@ class _Context(object):
 
 
 def _measure_latency(term, xs, rfb, metrics):
-    cpu0 = proc_cpu_s(term.pid)
     metrics["latency_ms"] = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS)
     if rfb is not None:
         e2e = []
@@ -147,21 +146,18 @@ def _measure_latency(term, xs, rfb, metrics):
             e2e.append(rfb.key_roundtrip_ms(KEYSYMS[i % 2]))
             time.sleep(max(0.0, t0 + KEY_INTERVAL_MS / 1000.0 - time.monotonic()))
         metrics["e2e_latency_ms"] = e2e
-    metrics["term_cpu_s"] = proc_cpu_s(term.pid) - cpu0
 
 
 def _measure_throughput(term, dw, ctx, wl, metrics, flags):
     deadline = time.monotonic() + wl.timeout_s
     start = end = None
-    cpu_start = cpu_end = None
     while time.monotonic() < deadline:
         for ev in _read_status(ctx.status_path):
             if ev["event"] == "start" and start is None:
-                start, cpu_start = ev, proc_cpu_s(term.pid)
+                start = ev
             elif ev["event"] == "end":
                 end = ev
         if end is not None:
-            cpu_end = proc_cpu_s(term.pid)
             break
         time.sleep(0.02)
     if start is None or end is None:
@@ -179,8 +175,6 @@ def _measure_throughput(term, dw, ctx, wl, metrics, flags):
         metrics["throughput_mb_s"] = end["bytes"] / 1e6 / max(elapsed + drain, 1e-9)
     if end.get("frames") is not None:
         metrics["frames"] = end["frames"]
-    tc = end.get("term_cpu_s")
-    metrics["term_cpu_s"] = tc if tc is not None else (cpu_end - cpu_start)
 
 
 def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
@@ -219,7 +213,9 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             if rfb is not None:
                 rfb.reset_stats()
             x11_0 = proxy.stats() if proxy is not None else None
-            xcpu0 = proc_cpu_s(xs.pid)
+            # Terminal and X server CPU share one window: from the start of the workload phase until
+            # its damage has drained, so work a build moves into the drain is still counted.
+            tcpu0, xcpu0 = proc_cpu_s(term.pid), proc_cpu_s(xs.pid)
             dw.reset()
             if wl.kind == "latency":
                 _measure_latency(term, xs, rfb, metrics)
@@ -229,6 +225,7 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             dmg = dw.stop()
             metrics["damage_events"] = dmg["events"]
             metrics["damage_area_px"] = dmg["area_px"]
+            metrics["term_cpu_s"] = proc_cpu_s(term.pid) - tcpu0
             metrics["xserver_cpu_s"] = proc_cpu_s(xs.pid) - xcpu0
             if rfb is not None:
                 st = rfb.stats()

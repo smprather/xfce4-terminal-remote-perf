@@ -319,30 +319,6 @@ def cleanup(ctx):
 # --------------------------------------------------------------------------- payload side (runs in the pty)
 
 
-def _stat(pid):
-    try:
-        with open("/proc/%d/stat" % pid) as f:
-            data = f.read()
-    except OSError:
-        return None
-    fields = data[data.rindex(")") + 2:].split()
-    return data[data.index("(") + 1:data.rindex(")")], int(fields[1]), int(fields[11]) + int(fields[12])
-
-
-def term_cpu_s():
-    """CPU seconds of the nearest xfce4-terminal ancestor, or None (e.g. inside tmux)."""
-    from xtrp.metrics import proc_cpu_s
-    pid = os.getpid()
-    while pid > 1:
-        st = _stat(pid)
-        if st is None:
-            return None
-        if st[0].startswith("xfce4-termina"):
-            return proc_cpu_s(pid)
-        pid = st[1]
-    return None
-
-
 def _emit(status_path, event):
     with open(status_path, "a") as f:
         f.write(json.dumps(event) + "\n")
@@ -353,10 +329,6 @@ def _write_all(data):
     off = 0
     while off < len(view):
         off += os.write(1, view[off:off + CHUNK])
-
-
-def _delta(c0, c1):
-    return None if c0 is None or c1 is None else c1 - c0
 
 
 def _redraw_frames(cols, rows, seconds, sync):
@@ -417,7 +389,6 @@ def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, 
     else:
         raise SystemExit("xtrp workload: %s has no payload side" % name)
     _await_go(go)
-    c0 = term_cpu_s()
     _emit(status, {"event": "start", "t": time.monotonic()})
     if data is None:
         frames, nbytes = _redraw_frames(cols, rows, REDRAW_SECONDS if seconds is None else seconds, sync)
@@ -426,7 +397,7 @@ def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, 
         _write_all(data)
         nbytes = len(data)
     t_end = time.monotonic()
-    event = {"event": "end", "t": t_end, "bytes": nbytes, "term_cpu_s": _delta(c0, term_cpu_s())}
+    event = {"event": "end", "t": t_end, "bytes": nbytes}
     event.update(extra)
     _emit(status, event)
     sys.stdout.flush()

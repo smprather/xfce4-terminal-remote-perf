@@ -131,6 +131,33 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(len(e2e), 20)
         self.assertTrue(all(v is not None and v > 0 for v in e2e), e2e)
 
+    def test_terminal_cpu_covers_the_drain_like_xserver_cpu(self):
+        # A payload that reports "end" at once and only then writes 20 MiB: all of the terminal's work
+        # happens in the drain, which X server CPU, damage and VNC bytes already include.
+        from unittest import mock
+        from xtrp import workloads
+        late = ("import json, os, sys, time\n"
+                "status, go = sys.argv[1], sys.argv[2]\n"
+                "while not os.path.exists(go): time.sleep(0.005)\n"
+                "def emit(e):\n"
+                "    with open(status, 'a') as f: f.write(json.dumps(e) + '\\n')\n"
+                "emit({'event': 'start', 't': time.monotonic()})\n"
+                "emit({'event': 'end', 't': time.monotonic(), 'bytes': 1})\n"
+                "data = (b'x' * 199 + b'\\n') * (20 * 1024 * 1024 // 200)\n"
+                "v = memoryview(data)\n"
+                "while v: v = v[os.write(1, v[:65536]):]\n"
+                "time.sleep(3600)\n")
+        wl = workloads.Workload("late-output", "throughput",
+                                lambda ctx: [sys.executable, "-c", late, ctx.status_path, ctx.go_path], 120)
+        block = {"displays": ["xvfb"], "wms": ["none"], "sizes": ["small"], "fonts": ["dejavu"],
+                 "workloads": ["late-output"], "iterations": 1}
+        with mock.patch.dict(workloads.WORKLOADS, {"late-output": wl}):
+            self.assertEqual(run_preset([block], ["baseline"], self.out), 1)
+        r = load_records(self.out)[0]
+        self.assertEqual(r["flags"]["errors"], [])
+        self.assertGreater(r["metrics"]["drain_s"], 0.1)
+        self.assertGreater(r["metrics"]["term_cpu_s"], 0.08, r["metrics"])
+
     def test_broken_build_is_recorded_and_matrix_continues(self):
         builds = os.path.join(self.out, "builds.json")
         with open(builds, "w") as f:

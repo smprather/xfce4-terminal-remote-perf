@@ -153,7 +153,6 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual([e["event"] for e in ev], ["start", "end"])
         self.assertGreaterEqual(ev[1]["t"], ev[0]["t"])
         self.assertEqual(ev[1]["bytes"], 65536)
-        self.assertIn("term_cpu_s", ev[1])  # null here: no xfce4-terminal ancestor
 
     def test_payload_waits_for_the_go_file(self):
         go = os.path.join(self.tmp, "go")
@@ -220,26 +219,21 @@ class WorkloadInTerminalTest(unittest.TestCase):
             time.sleep(0.05)
         return ctx, term, events
 
-    def test_bulk_payload_finds_the_terminal_cpu(self):
+    def test_bulk_payload_reports_start_and_end_in_the_terminal(self):
         _, _, ev = self.run_in_terminal("bulk-ascii", 60, n_bytes=1 << 20)
         self.assertEqual([e["event"] for e in ev], ["start", "end"])
-        self.assertIsInstance(ev[1]["term_cpu_s"], float)
-        self.assertGreater(ev[1]["term_cpu_s"], 0.0)
+        self.assertEqual(ev[1]["bytes"], 1 << 20)
 
     def test_nvim_scroll_reports_start_and_end(self):
         need_tool("nvim")
         _, _, ev = self.run_in_terminal("nvim-scroll", 120)
         self.assertEqual([e["event"] for e in ev], ["start", "end"], ev)
         self.assertGreater(ev[1]["t"], ev[0]["t"])
-        # CPU comes from schedstat (ns), not 10 ms ticks: not an exact multiple of 1/CLK_TCK
-        ticks = ev[1]["term_cpu_s"] * os.sysconf("SC_CLK_TCK")
-        self.assertGreater(abs(ticks - round(ticks)), 1e-6, ev[1]["term_cpu_s"])
 
     def test_tmux_bulk_split_runs_and_cleanup_stops_its_server(self):
         need_tool("tmux")
         ctx, term, ev = self.run_in_terminal("tmux-bulk-split", 120, n_bytes=1 << 20)
         self.assertEqual([e["event"] for e in ev], ["start", "end"], ev)
-        self.assertIsNone(ev[1]["term_cpu_s"])  # under the tmux server, not the terminal
         sock = os.path.join(ctx.workdir, "tmux-%d" % os.getuid(), ctx.tmux_socket)
         self.assertTrue(os.path.exists(sock))
         servers = [p for p, _ in descendants(1)
