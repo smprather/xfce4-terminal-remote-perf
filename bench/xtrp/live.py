@@ -8,6 +8,7 @@ refuses (NotFocusedError) otherwise, so nothing ever lands in another window.
 import os
 import time
 
+from xtrp import display as _display
 from xtrp import xlat
 from xtrp.metrics import DamageWatch, proc_cpu_s, summarize
 
@@ -29,6 +30,27 @@ def live_latency(display, window=None, pick=False, samples=40):
     # their first damage may not be the echo, so their latency may be understated.
     multi = sum(1 for d in detail if d["paints"] > 1)
     return {"window": window, "latency_ms": summarize(raw), "raw": raw, "multi_paint": multi}
+
+
+def live_startup(display, samples=5, env=None, launcher=("xfce4-terminal",)):
+    """Launch a terminal on `display` `samples` times and time each until its window is mapped, then
+    close it again. Nothing is typed into it. `env` defaults to the caller's own environment, so the
+    terminal starts the way it does for the user (their settings, their session bus)."""
+    env = dict(os.environ if env is None else env)
+    env["DISPLAY"] = display
+    raw = []
+    for i in range(samples):
+        title = "xtrp-startup-%d-%d" % (os.getpid(), i)
+        argv = list(launcher) + ["--disable-server", "--title", title, "-x", "sleep", "60"]
+        t0 = time.monotonic()
+        proc = _display.spawn(argv, env, os.devnull)
+        try:
+            _, t_win = xlat.wait_window(display, title, timeout_ms=30000)
+            raw.append((t_win - t0) * 1000.0)
+        finally:
+            _display.stop_group(proc)
+        time.sleep(0.3)
+    return {"startup_ms": summarize(raw), "raw": raw}
 
 
 def _cmdline(pid):

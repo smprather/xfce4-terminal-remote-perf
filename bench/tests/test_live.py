@@ -1,8 +1,9 @@
 import unittest
+from unittest import mock
 
-from tests.xenv import XvfbFixture
-from xtrp import xlat
-from xtrp.live import live_latency, live_watch
+from tests.xenv import XvfbFixture, group_members, need_tool, wait_gone
+from xtrp import display, platform, xlat
+from xtrp.live import live_latency, live_startup, live_watch
 
 
 class LiveTest(XvfbFixture):
@@ -32,6 +33,29 @@ class LiveTest(XvfbFixture):
         twice = self.start_testwin(title="twice", delay_ms=5, rect="10x10", second_paint_ms=30)
         xlat.focus(self.display, twice)
         self.assertEqual(live_latency(self.display, window=twice, samples=4)["multi_paint"], 4)
+
+    def test_live_startup_times_new_windows_and_leaves_nothing(self):
+        # The spec's live startup: launch a terminal on the real display, time its first mapped
+        # window, close it again.
+        for tool in ("dbus-run-session", "xfce4-terminal"):
+            need_tool(tool)
+        spawned = []
+        real = display.spawn
+
+        def spy(*args, **kw):
+            proc = real(*args, **kw)
+            spawned.append(proc)
+            return proc
+        env = platform.child_env(self.display, self.tmp)          # tests never use the host session
+        with mock.patch.object(display, "spawn", spy):
+            res = live_startup(self.display, samples=2, env=env,
+                               launcher=["dbus-run-session", "--", "xfce4-terminal"])
+        self.assertEqual(len(res["raw"]), 2)
+        self.assertTrue(all(0 < v < 30000 for v in res["raw"]), res)
+        self.assertEqual(res["startup_ms"]["n"], 2)
+        self.assertEqual(len(spawned), 2)
+        for proc in spawned:
+            self.assertEqual(wait_gone(lambda: group_members(proc.pid)), [])
 
     def test_live_watch_counts_damage_and_server_cpu(self):
         win = self.start_testwin(title="busy", delay_ms=0, rect="10x10", damage_forever=True)

@@ -37,6 +37,12 @@ class ScrubTest(unittest.TestCase):
         scrub(planted)
         self.assertEqual(planted, {"ip": ["10.9.8.7"]})
 
+    def test_helper_commands_cannot_start_a_session_bus(self):
+        # gsettings with no bus address would autolaunch a dbus-daemon on the user's real desktop
+        from xtrp import diag
+        out = diag._run(["sh", "-c", "echo \"$DBUS_SESSION_BUS_ADDRESS\""], ":0")
+        self.assertEqual(out, "disabled:")
+
     def test_display_transport(self):
         for display, want in ((":0", "unix"), (":0.0", "unix"), ("unix:3", "unix"), ("A:2", "tcp"),
                               ("build7.eng.example.corp:3", "tcp"), ("localhost:10.0", "tcp"), ("", None)):

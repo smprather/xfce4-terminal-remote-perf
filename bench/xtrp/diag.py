@@ -87,8 +87,12 @@ def display_transport(display):
 
 
 def _run(argv, display):
+    env = platform.helper_env(display)
+    # No bus: gsettings would otherwise autolaunch a dbus-daemon on the user's real desktop. Settings
+    # are still read (dconf reads its database files directly).
+    env["DBUS_SESSION_BUS_ADDRESS"] = "disabled:"
     try:
-        r = subprocess.run(argv, env=platform.helper_env(display), stdout=subprocess.PIPE,
+        r = subprocess.run(argv, env=env, stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, universal_newlines=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None

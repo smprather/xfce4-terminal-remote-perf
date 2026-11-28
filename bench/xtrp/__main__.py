@@ -119,6 +119,10 @@ def _cmd_live(args):
             sys.stderr.write("note: %d of %d keys painted twice (a blinking cursor?), so their latency may be\n"
                              "understated; turn cursor blinking off in that terminal and run this again\n"
                              % (res["multi_paint"], len(res["raw"])))
+    elif args.what == "startup":
+        sys.stderr.write("Opening and closing a new %s window %d times (nothing is typed into it).\n"
+                         % (args.exec, args.samples))
+        res = live.live_startup(display, samples=args.samples, launcher=[args.exec])
     else:
         sys.stderr.write("Watching window %d for %d s: run your workload in it now.\n" % (args.window, args.seconds))
         res = live.live_watch(display, args.window, args.seconds)
@@ -176,6 +180,10 @@ def main(argv=None):
     g.add_argument("--window", type=lambda v: int(v, 0), help="window id (default: this terminal, $WINDOWID)")
     g.add_argument("--pick", action="store_true", help="click the terminal to measure")
     q.add_argument("--samples", type=int, default=40)
+    q.set_defaults(func=_cmd_live)
+    q = live_sub.add_parser("startup", help="time a new terminal window from launch to mapped")
+    q.add_argument("--samples", type=int, default=5)
+    q.add_argument("--exec", default="xfce4-terminal", help="terminal to launch (default: from PATH)")
     q.set_defaults(func=_cmd_live)
     q = live_sub.add_parser("watch", help="damage and X server CPU while you drive a window")
     q.add_argument("--window", type=lambda v: int(v, 0), required=True)
