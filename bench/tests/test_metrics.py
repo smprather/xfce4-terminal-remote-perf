@@ -94,6 +94,17 @@ class DamageWatchTest(XvfbFixture):
         self.assertGreater(st["events"], 5)
         self.assertEqual(st["area_px"], 100 * st["events"])
 
+    def test_interrupt_while_arming_leaves_no_watcher(self):
+        from unittest import mock
+        from tests.xenv import pid_alive
+        win = self.start_testwin(title="arm", delay_ms=0, rect="20x20")
+        dw = DamageWatch(self.display, win)
+        with mock.patch.object(dw._ready, "wait", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                dw.start()
+        self.assertIsNotNone(dw._proc)
+        self.assertFalse(pid_alive(dw._proc.pid))
+
     def test_reset_zeroes_the_counters(self):
         win = self.start_testwin(title="busy2", delay_ms=0, rect="10x10", damage_forever=True)
         dw = DamageWatch(self.display, win).start()

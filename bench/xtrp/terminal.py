@@ -143,6 +143,13 @@ class Terminal(object):
         log_path = os.path.join(self.workdir, "%s.log" % self.title)
         t0 = time.monotonic()
         self._proc = spawn(argv, env, log_path)
+        try:
+            return self._await_window(t0, timeout_s, log_path)
+        except BaseException:              # Ctrl-C or an xlat failure: never leave it on the display
+            self.stop()
+            raise
+
+    def _await_window(self, t0, timeout_s, log_path):
         deadline = t0 + timeout_s
         while True:
             left_ms = int((deadline - time.monotonic()) * 1000)

@@ -8,7 +8,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest import mock
 
-from tests.xenv import need_tool, pid_alive
+from tests.xenv import group_members, need_tool, pid_alive, wait_gone
 from xtrp import platform, xlat
 from xtrp.display import XServer
 from xtrp.model import Build, load_builds
@@ -69,6 +69,25 @@ class TerminalTest(unittest.TestCase):
         self.assertFalse(pid_alive(pid))
         for child, _ in children:
             self.assertFalse(pid_alive(child), child)
+
+    def test_interrupt_or_x_error_during_startup_leaves_no_terminal(self):
+        from xtrp import terminal as terminal_mod
+        for exc in (KeyboardInterrupt(), xlat.XlatError("xlat wait-window exited 1: boom", 1, [])):
+            with self.subTest(exc=type(exc).__name__):
+                spawned = []
+                real = terminal_mod.spawn
+
+                def spy(*args, **kw):
+                    proc = real(*args, **kw)
+                    spawned.append(proc)
+                    return proc
+                t = self._terminal()
+                with mock.patch.object(terminal_mod, "spawn", spy), \
+                        mock.patch.object(terminal_mod.xlat, "wait_window", side_effect=exc):
+                    with self.assertRaises(type(exc)):
+                        t.start()
+                self.assertEqual(len(spawned), 1)
+                self.assertEqual(wait_gone(lambda: group_members(spawned[0].pid)), [])
 
     def test_stop_is_idempotent(self):
         t = self._terminal().start()

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tests.xenv import need_tool, pid_alive
+from tests.xenv import group_members, need_tool, pid_alive, wait_gone
 from xtrp import display, platform, xlat
 from xtrp.display import WindowManager, XServer, WM_NAMES
 
@@ -73,6 +73,44 @@ class DisplayTest(unittest.TestCase):
         self.assertFalse(os.path.exists("/tmp/.X%d-lock" % n))
         self.assertFalse(os.path.exists("/tmp/.X11-unix/X%d" % n))
         self.assertFalse(pid_alive(pid))
+
+    def _spy_spawn(self):
+        spawned = []
+        real = display.spawn
+
+        def spy(*args, **kw):
+            proc = real(*args, **kw)
+            spawned.append(proc)
+            return proc
+        return spawned, mock.patch.object(display, "spawn", spy)
+
+    def test_interrupt_during_server_startup_leaves_no_server(self):
+        # Ctrl-C lands at the end of the readiness wait, once the server is up and holds its lock.
+        need_tool("Xvfb")
+        spawned, spy = self._spy_spawn()
+        real_await = XServer._await_ready
+        seen = []
+
+        def ready_then_interrupt(self_, proc, n, read_fd):
+            seen.append((n, real_await(self_, proc, n, read_fd)))
+            raise KeyboardInterrupt
+        with spy, mock.patch.object(XServer, "_await_ready", ready_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                XServer("xvfb").start()
+        self.assertEqual([ok for _, ok in seen], [True])
+        self.assertEqual(wait_gone(lambda: group_members(spawned[0].pid)), [])
+        self.assertFalse(os.path.exists("/tmp/.X%d-lock" % seen[0][0]))
+
+    def test_interrupt_during_wm_startup_leaves_no_wm(self):
+        need_tool("Xvfb")
+        need_tool("marco")
+        with XServer("xvfb") as xs:
+            spawned, spy = self._spy_spawn()
+            with spy, mock.patch.object(display.xlat, "info", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    WindowManager("marco-nocomp", xs.display).start()
+            self.assertEqual(len(spawned), 1)
+            self.assertEqual(wait_gone(lambda: group_members(spawned[0].pid)), [])
 
     def test_busy_abstract_socket_falls_through_to_next_display(self):
         # Another server holding only @/tmp/.X11-unix/XN (no lock file) must not be mistaken for ours.

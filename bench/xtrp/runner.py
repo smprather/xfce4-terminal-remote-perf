@@ -203,13 +203,14 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             x11_launch = proxy.stats() if proxy is not None else None
             term = Terminal(build, proxy.display if proxy is not None else xs.display, key.size, key.font,
                             wl.command(ctx), workdir, xlat_display=xs.display)
-            term.start()
             stack.callback(term.stop)
+            term.start()
             metrics["startup_ms"] = term.startup_ms
             if proxy is not None:
                 metrics["startup_x11_replies"] = proxy.stats()["replies"] - x11_launch["replies"]
-            dw = DamageWatch(xs.display, term.window).start()
+            dw = DamageWatch(xs.display, term.window)
             stack.callback(dw.stop)
+            dw.start()
             xlat.focus(xs.display, term.window)
             # Let startup (and nvim/tmux's first screen) finish painting; throughput payloads are
             # parked on the go file meanwhile. Workload-phase metrics start from here.

@@ -85,7 +85,12 @@ class DamageWatch(object):
                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._thread = threading.Thread(target=self._reader, name="damage-watch", daemon=True)
         self._thread.start()
-        if not self._ready.wait(timeout_s):
+        try:
+            ready = self._ready.wait(timeout_s)
+        except BaseException:
+            self.stop()
+            raise
+        if not ready:
             self.stop()
             raise RuntimeError("xlat damage did not arm on window %s" % self.window)
         return self

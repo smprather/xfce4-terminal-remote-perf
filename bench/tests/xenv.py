@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import shutil
 import signal
 import subprocess
@@ -26,6 +27,32 @@ def pid_alive(pid):
     except (OSError, IndexError):
         return False
     return state != "Z"
+
+
+def group_members(pgid):
+    """Live (non-zombie) pids whose process group is `pgid`."""
+    out = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % name) as f:
+                fields = f.read().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        if fields[0] != "Z" and int(fields[2]) == pgid:
+            out.append(int(name))
+    return out
+
+
+def wait_gone(pids_fn, timeout_s=5.0):
+    """Poll `pids_fn()` until it returns nothing or `timeout_s` passes; return the last result."""
+    deadline = time.monotonic() + timeout_s
+    left = pids_fn()
+    while left and time.monotonic() < deadline:
+        time.sleep(0.05)
+        left = pids_fn()
+    return left
 
 
 def need_tool(name):

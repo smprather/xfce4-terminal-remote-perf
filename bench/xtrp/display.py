@@ -174,9 +174,16 @@ class XServer(object):
             finally:
                 os.close(write_fd)
             try:
-                ok = self._await_ready(proc, n, read_fd)
-            finally:
-                os.close(read_fd)
+                try:
+                    ok = self._await_ready(proc, n, read_fd)
+                finally:
+                    os.close(read_fd)
+            except BaseException:          # e.g. Ctrl-C: the server runs in its own session
+                stop_group(proc)
+                self._cleanup_leftovers(n, proc.pid)
+                shutil.rmtree(self._workdir, ignore_errors=True)
+                self._workdir = None
+                raise
             if ok:
                 self._proc, self.number, self.pid = proc, n, proc.pid
                 self.display = ":%d" % n
@@ -236,23 +243,27 @@ class WindowManager(object):
         self._workdir = tempfile.mkdtemp(prefix="xtrp-wm-")
         log_path = os.path.join(self._workdir, "wm.log")
         self._proc = spawn(self._argv(), platform.child_env(self.display, self._workdir), log_path)
+        try:
+            self._await_ready(log_path, timeout_s)
+        except BaseException:
+            self.stop()
+            raise
+        return self
+
+    def _await_ready(self, log_path, timeout_s):
         want_cm = self.name in ("mutter", "marco-comp")
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if exited(self._proc):
-                tail = _tail(log_path)
-                self.stop()
-                raise WmStartError("%s exited during startup:\n%s" % (self.name, tail))
+                raise WmStartError("%s exited during startup:\n%s" % (self.name, _tail(log_path)))
             try:
                 i = xlat.info(self.display)
             except xlat.XlatError:
                 i = None
             if i and i["wm_name"] is not None and (i["cm_owner"] or not want_cm):
-                return self
+                return
             time.sleep(0.1)
-        tail = _tail(log_path)
-        self.stop()
-        raise WmStartError("%s not ready within %.0f s:\n%s" % (self.name, timeout_s, tail))
+        raise WmStartError("%s not ready within %.0f s:\n%s" % (self.name, timeout_s, _tail(log_path)))
 
     def stop(self):
         if self._proc is not None:
