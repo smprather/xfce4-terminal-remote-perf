@@ -236,12 +236,10 @@ Workload = collections.namedtuple("Workload", "name kind command timeout_s")
 class WorkloadCtx(object):
     """Per-run inputs to a workload's command."""
 
-    def __init__(self, status_path, workdir, sync=False, cols=120, rows=40, n_bytes=None):
+    def __init__(self, status_path, workdir, sync=False, n_bytes=None):
         self.status_path = status_path
         self.workdir = workdir
         self.sync = sync
-        self.cols = cols
-        self.rows = rows
         self.n_bytes = n_bytes
         self.go_path = os.path.join(workdir, "go")      # throughput payloads start when this exists
         self.tmux_socket = "xtrp-%d-%d" % (os.getpid(), next(_socket_counter))
@@ -297,8 +295,7 @@ WORKLOADS = {w.name: w for w in (
     Workload("unicode", "throughput", _bulk("unicode"), 600),
     Workload("box-drawing", "throughput", _bulk("box-drawing"), 600),
     Workload("compile-log", "throughput", lambda ctx: _payload(ctx, "compile-log", "--lines", str(DEFAULT_LINES)), 600),
-    Workload("fullscreen-redraw", "throughput",
-             lambda ctx: _payload(ctx, "fullscreen-redraw", "--cols", str(ctx.cols), "--rows", str(ctx.rows)), 120),
+    Workload("fullscreen-redraw", "throughput", lambda ctx: _payload(ctx, "fullscreen-redraw"), 120),
     Workload("nvim-scroll", "throughput",
              lambda ctx: _payload(ctx, "nvim-scroll", "--steps", str(SCROLL_STEPS)), 300),
     Workload("tmux-bulk-split", "throughput", _tmux_bulk_split, 600),
@@ -364,7 +361,7 @@ def _await_go(go, timeout_s=600.0):
         time.sleep(0.005)
 
 
-def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, rows=40, steps=None,
+def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=None, rows=None, steps=None,
                 exit_after=False, go=None):
     """The in-terminal side of a throughput workload. Sleeps forever afterwards unless exit_after.
 
@@ -391,7 +388,9 @@ def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=120, 
     _await_go(go)
     _emit(status, {"event": "start", "t": time.monotonic()})
     if data is None:
-        frames, nbytes = _redraw_frames(cols, rows, REDRAW_SECONDS if seconds is None else seconds, sync)
+        size = os.get_terminal_size(1) if cols is None or rows is None else None   # the real pty size
+        frames, nbytes = _redraw_frames(cols or size.columns, rows or size.lines,
+                                        REDRAW_SECONDS if seconds is None else seconds, sync)
         extra["frames"] = frames
     else:
         _write_all(data)

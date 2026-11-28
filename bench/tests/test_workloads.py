@@ -184,6 +184,36 @@ class PayloadTest(unittest.TestCase):
         self.assertGreater(ev[1]["frames"], 3)
         self.assertGreater(ev[1]["bytes"], 3 * 40 * 10)
 
+    def test_fullscreen_redraw_fills_the_real_terminal_size(self):
+        # No --cols/--rows: frames must match the pty's size, or every row wraps and the frame scrolls.
+        import fcntl
+        import pty
+        import struct
+        import termios
+        import tty
+        master, slave = pty.openpty()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 8, 30, 0, 0))
+            tty.setraw(slave)
+            env = dict(os.environ, PYTHONPATH=BENCH)
+            proc = subprocess.Popen([sys.executable, "-m", "xtrp", "workload", "fullscreen-redraw", "--seconds",
+                                     "0.1", "--status", self.status, "--exit"], stdout=slave, env=env)
+            out = b""
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                import select
+                if select.select([master], [], [], 0.1)[0]:
+                    out += os.read(master, 65536)
+                elif proc.poll() is not None:
+                    break
+            proc.wait(timeout=10)
+        finally:
+            os.close(master)
+            os.close(slave)
+        first = out.split(b"\x1b[H")[1]
+        lines = first.split(b"\r\n")[:8]
+        self.assertEqual([len(line) for line in lines], [30] * 8, lines[:2])
+
     def test_compile_log_payload_counts_bytes(self):
         ev = self.run_payload("compile-log", "--lines", "200")
         self.assertEqual(ev[1]["bytes"], len(b"".join(gen_compile_log(200))))

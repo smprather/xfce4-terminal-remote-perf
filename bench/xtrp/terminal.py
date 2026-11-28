@@ -6,17 +6,23 @@ host's 1.2.0). The terminal runs under its own dbus-run-session so xfconfd
 starts against the per-run HOME and nothing reaches a desktop session bus.
 """
 
+import fcntl
 import itertools
 import os
 import re
 import signal
+import struct
+import termios
 import time
 from xml.sax.saxutils import quoteattr
 
 from xtrp import platform, xlat
 from xtrp.display import exited, spawn, stop_group
 
-SIZES = {"small": "120x40", "large": "236x62"}
+# The spec's two window sizes: 120x40, and 1920x1080 maximised. "large" is asked of the WM with
+# --maximize; with no WM the window is moved and sized to the whole screen once it maps.
+SIZES = {"small": "120x40", "large": "maximised"}
+_SIZE_ARGS = {"small": ["--geometry", "120x40"], "large": ["--maximize"]}
 FONTS = {"caskaydia": "CaskaydiaCove Nerd Font Mono 12", "dejavu": "DejaVu Sans Mono 12"}
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -137,8 +143,8 @@ class Terminal(object):
         extra = dict(self.build.env)
         extra.update(self.env)
         env = platform.child_env(self.display, self.workdir, extra)
-        argv = (["dbus-run-session", "--", self.build.exec_path, "--disable-server",
-                 "--geometry", SIZES[self.size], "--title", self.title,
+        argv = (["dbus-run-session", "--", self.build.exec_path, "--disable-server"]
+                + _SIZE_ARGS[self.size] + ["--title", self.title,
                  "--hide-menubar", "--hide-toolbar", "-x"] + self.command)
         log_path = os.path.join(self.workdir, "%s.log" % self.title)
         t0 = time.monotonic()
@@ -165,6 +171,8 @@ class Terminal(object):
         self.pid = self._find_pid()
         if self.pid is None:
             self._fail("window mapped but no xfce4-terminal process found", log_path)
+        if self.size == "large" and xlat.info(self.xlat_display)["wm_name"] is None:
+            xlat.fill_screen(self.xlat_display, self.window)
         return self
 
     def _fail(self, why, log_path):
@@ -175,6 +183,37 @@ class Terminal(object):
             tail = ""
         self.stop()
         raise TerminalStartError("%s\n%s" % (why, tail))
+
+    def geometry(self, settle_s=0.0):
+        """xlat.geometry of the window, once it has stopped changing for 0.3 s (or `settle_s` passed)."""
+        deadline = time.monotonic() + settle_s
+        last, since = xlat.geometry(self.xlat_display, self.window), time.monotonic()
+        while time.monotonic() < deadline and time.monotonic() - since < 0.3:
+            time.sleep(0.05)
+            g = xlat.geometry(self.xlat_display, self.window)
+            if g != last:
+                last, since = g, time.monotonic()
+        return last
+
+    def cells(self):
+        """(cols, rows) of the terminal's pty, read from the first child attached to one; None if none."""
+        for pid, _ in self.descendants():
+            try:
+                tty_path = os.readlink("/proc/%d/fd/0" % pid)
+            except OSError:
+                continue
+            if not tty_path.startswith("/dev/pts/"):
+                continue
+            try:
+                fd = os.open(tty_path, os.O_RDONLY | os.O_NOCTTY)
+            except OSError:
+                continue
+            try:
+                rows, cols = struct.unpack("HHHH", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8))[:2]
+            finally:
+                os.close(fd)
+            return cols, rows
+        return None
 
     def descendants(self):
         """[(pid, starttime)] of the terminal's live child processes (shell, workload)."""

@@ -107,6 +107,9 @@ class RunnerTest(unittest.TestCase):
         self.assertAlmostEqual(bulk["metrics"]["total_s"], bulk["metrics"]["elapsed_s"] + bulk["metrics"]["drain_s"])
         self.assertFalse(bulk["flags"]["errors"])
         for r in recs:
+            self.assertEqual(r["geometry"]["cells"], [120, 40])            # smoke runs the small size
+            w, h = r["geometry"]["window_px"]
+            self.assertTrue(0 < w <= 1920 and 0 < h <= 1080, r["geometry"])
             self.assertEqual(r["schema"], 1)
             self.assertEqual(r["platform"]["tag"], platform.platform_tag())
             self.assertIn("vte", r["platform"]["packages"])

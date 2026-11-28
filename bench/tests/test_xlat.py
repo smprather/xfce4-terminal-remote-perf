@@ -25,6 +25,16 @@ class XlatTest(XvfbFixture):
             xlat.latency(self.display, win, samples=3, require_focus=True)
         self.assertEqual(self.stop_testwin(win)["keys"], 0)
 
+    def test_geometry_and_fill_screen(self):
+        win = self.start_testwin(title="geo", delay_ms=0, rect="10x10")
+        g = xlat.geometry(self.display, win)
+        self.assertEqual((g["x"], g["y"], g["width"], g["height"]), (0, 0, 400, 300))
+        root = (g["root_width"], g["root_height"])
+        self.assertGreater(root, (400, 300))
+        xlat.fill_screen(self.display, win)
+        g = xlat.geometry(self.display, win)
+        self.assertEqual((g["x"], g["y"], g["width"], g["height"]), (0, 0) + root)
+
     def test_info_reports_no_wm_on_bare_xvfb(self):
         i = xlat.info(self.display)
         self.assertIsNone(i["wm_name"])

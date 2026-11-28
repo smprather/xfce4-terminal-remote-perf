@@ -109,6 +109,16 @@ def focus(display, window):
     run_json(["focus", "--window", window], display, 5.0)
 
 
+def geometry(display, window):
+    """{"x", "y", "width", "height", "root_width", "root_height"} of `window` (x, y on the root)."""
+    return run_json(["geometry", "--window", window], display, 5.0)[0]
+
+
+def fill_screen(display, window):
+    """Move `window` to 0,0 and size it to the whole screen (maximising when there is no WM)."""
+    run_json(["fill", "--window", window], display, 5.0)
+
+
 def latency(display, window, samples, interval_ms=120, timeout_ms=2000, require_focus=False):
     """Keypress-to-damage latency per sample, in ms (None when no damage arrived)."""
     args = ["latency", "--window", window, "--samples", samples,

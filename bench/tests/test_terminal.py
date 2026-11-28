@@ -37,7 +37,7 @@ class BuildRegistryTest(unittest.TestCase):
         self.assertEqual(builds["baseline-twin"].env, builds["baseline"].env)
 
     def test_sizes_and_fonts(self):
-        self.assertEqual(SIZES, {"small": "120x40", "large": "236x62"})
+        self.assertEqual(SIZES, {"small": "120x40", "large": "maximised"})
         self.assertEqual(FONTS["caskaydia"], "CaskaydiaCove Nerd Font Mono 12")
         self.assertEqual(FONTS["dejavu"], "DejaVu Sans Mono 12")
 
@@ -88,6 +88,31 @@ class TerminalTest(unittest.TestCase):
                         t.start()
                 self.assertEqual(len(spawned), 1)
                 self.assertEqual(wait_gone(lambda: group_members(spawned[0].pid)), [])
+
+    def test_small_is_120x40_and_large_fills_the_screen_with_or_without_a_wm(self):
+        # The spec's sizes: 120x40, and 1920x1080 maximised. Nothing may hang off the screen.
+        from xtrp.display import WindowManager
+        wms = ["none"] + (["marco-nocomp"] if WindowManager.available("marco-nocomp") else [])
+        for wm in wms:
+            for size in ("small", "large"):
+                with self.subTest(wm=wm, size=size), WindowManager(wm, self.xs.display):
+                    t = Terminal(load_builds()["baseline"], self.xs.display, size, "caskaydia",
+                                 ["sleep", "60"], self.tmp).start()
+                    try:
+                        g = t.geometry(settle_s=3.0)
+                        cols, rows = t.cells()
+                    finally:
+                        t.stop()
+                    self.assertGreaterEqual(min(g["x"], g["y"]), 0, g)
+                    self.assertLessEqual(g["x"] + g["width"], 1920, g)
+                    self.assertLessEqual(g["y"] + g["height"], 1080, g)
+                    if size == "small":
+                        self.assertEqual((cols, rows), (120, 40))
+                    else:
+                        self.assertGreaterEqual(g["width"], 1800, g)
+                        self.assertGreaterEqual(g["height"], 950, g)
+                        self.assertGreater(cols, 150)
+                        self.assertGreater(rows, 40)
 
     def test_stop_is_idempotent(self):
         t = self._terminal().start()

@@ -25,7 +25,7 @@ from xtrp.display import WM_NAMES, WindowManager, XServer
 from xtrp.metrics import DamageWatch, proc_cpu_s
 from xtrp.model import SCHEMA, RunKey, load_builds, write_record
 from xtrp.rfb import RfbClient
-from xtrp.terminal import SIZES, Terminal
+from xtrp.terminal import Terminal
 from xtrp.x11proxy import X11Proxy
 
 MIB = 1 << 20
@@ -131,10 +131,10 @@ class _Context(object):
             key.size, key.font, key.workload, iteration))
         sys.stderr.flush()
 
-    def record(self, key, iteration, metrics, flags, xlat_info):
+    def record(self, key, iteration, metrics, flags, xlat_info, geometry=None):
         return {"schema": SCHEMA, "key": dict(key._asdict()), "iteration": iteration,
                 "platform": self.platform, "host": {"xlat_info": xlat_info},
-                "metrics": metrics, "flags": flags}
+                "geometry": geometry, "metrics": metrics, "flags": flags}
 
 
 def _measure_latency(term, xs, rfb, metrics):
@@ -181,14 +181,14 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
     """One measured run; always returns a record (errors go to flags.errors)."""
     metrics = {}
     flags = {"drain_timeout": False, "errors": []}
+    geometry = None
     wl = workloads.WORKLOADS[key.workload]
-    cols, rows = (int(v) for v in SIZES[key.size].split("x"))
     try:
         with contextlib.ExitStack() as stack:
             workdir = tempfile.mkdtemp(prefix="xtrp-run-")
             stack.callback(shutil.rmtree, workdir, True)
             ctx = workloads.WorkloadCtx(os.path.join(workdir, "status.jsonl"), workdir,
-                                        sync=(key.variant == "sync"), cols=cols, rows=rows, n_bytes=n_bytes)
+                                        sync=(key.variant == "sync"), n_bytes=n_bytes)
             stack.callback(workloads.cleanup, ctx)
             build = registry[key.build]
             _park_pointer(xs.display)
@@ -210,6 +210,9 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             # parked on the go file meanwhile. Workload-phase metrics start from here.
             if not dw.wait_quiet(QUIET_MS, SETTLE_CAP_S):
                 flags["drain_timeout"] = True
+            g, cells = xlat.geometry(xs.display, term.window), term.cells()
+            geometry = {"window_px": [g["width"], g["height"]], "position": [g["x"], g["y"]],
+                        "cells": list(cells) if cells else None}
             if rfb is not None:
                 rfb.reset_stats()
             x11_0 = proxy.stats() if proxy is not None else None
@@ -238,7 +241,7 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
                 metrics["x11_requests"] = sum(x11_1["requests"].values()) - sum(x11_0["requests"].values())
     except Exception as e:  # noqa: BLE001 - one broken run must not stop the matrix
         flags["errors"].append(_short_exc(e))
-    return rc.record(key, iteration, metrics, flags, xlat_info)
+    return rc.record(key, iteration, metrics, flags, xlat_info, geometry)
 
 
 def _run_group(gkey, runs, registry, out_dir, rc):

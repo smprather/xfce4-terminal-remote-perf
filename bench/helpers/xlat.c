@@ -8,6 +8,8 @@
  *                                                    (exit 2 when not focused)
  *   xlat damage --window W     ({"ready":..} once armed, then rects until SIGTERM/SIGINT)
  *   xlat pick
+ *   xlat geometry --window W  (position on the root, size, and the root's size)
+ *   xlat fill --window W      (move to 0,0 and resize to the whole root; for the no-WM case)
  * The display comes from $DISPLAY. Other failures exit 1.
  */
 #define _POSIX_C_SOURCE 200809L
@@ -265,6 +267,33 @@ static int mode_focus(Display *dpy, Window w)
     return 0;
 }
 
+static int mode_geometry(Display *dpy, Window w)
+{
+    XWindowAttributes wa, ra;
+    Window child;
+    int x = 0, y = 0;
+    g_xerr = 0;
+    if (!XGetWindowAttributes(dpy, w, &wa) || g_xerr)
+        die("XGetWindowAttributes failed (bad window?)");
+    XGetWindowAttributes(dpy, DefaultRootWindow(dpy), &ra);
+    XTranslateCoordinates(dpy, w, DefaultRootWindow(dpy), 0, 0, &x, &y, &child);
+    printf("{\"x\":%d,\"y\":%d,\"width\":%d,\"height\":%d,\"root_width\":%d,\"root_height\":%d}\n",
+           x, y, wa.width, wa.height, ra.width, ra.height);
+    return 0;
+}
+
+static int mode_fill(Display *dpy, Window w)
+{
+    XWindowAttributes ra;
+    XGetWindowAttributes(dpy, DefaultRootWindow(dpy), &ra);
+    g_xerr = 0;
+    XMoveResizeWindow(dpy, w, 0, 0, (unsigned)ra.width, (unsigned)ra.height);
+    XSync(dpy, False);
+    if (g_xerr)
+        die("XMoveResizeWindow failed (bad window?)");
+    return 0;
+}
+
 static Damage damage_on(Display *dpy, Window w, int *event_base)
 {
     int err_base;
@@ -426,7 +455,7 @@ int main(int argc, char **argv)
 
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc < 2)
-        die("usage: xlat info|wait-window|focus|latency|damage|pick [options]");
+        die("usage: xlat info|wait-window|focus|latency|damage|pick|geometry|fill [options]");
     mode = argv[1];
     for (i = 2; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -481,6 +510,14 @@ int main(int argc, char **argv)
         rc = mode_damage(dpy, (Window)window);
     } else if (strcmp(mode, "pick") == 0) {
         rc = mode_pick(dpy);
+    } else if (strcmp(mode, "geometry") == 0) {
+        if (!window)
+            die("geometry needs --window");
+        rc = mode_geometry(dpy, (Window)window);
+    } else if (strcmp(mode, "fill") == 0) {
+        if (!window)
+            die("fill needs --window");
+        rc = mode_fill(dpy, (Window)window);
     } else {
         fprintf(stderr, "xlat: unknown mode %s\n", mode);
         rc = 1;
