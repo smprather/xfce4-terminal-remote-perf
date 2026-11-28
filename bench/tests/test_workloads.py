@@ -16,8 +16,8 @@ from xtrp.workloads import (CHUNK, WORKLOADS, WorkloadCtx, gen_box, gen_bulk_asc
                             cleanup, gen_sgr, gen_source_file, gen_unicode, tmux_argv)
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ELEVEN = ["shell-echo", "nvim-type", "tmux-type", "bulk-ascii", "sgr-color", "unicode", "box-drawing",
-          "compile-log", "fullscreen-redraw", "nvim-scroll", "tmux-bulk-split"]
+THIRTEEN = ["shell-echo", "nvim-type", "tmux-type", "bulk-ascii", "sgr-color", "unicode", "box-drawing",
+          "compile-log", "fullscreen-redraw", "nvim-scroll", "tmux-bulk-split", "tmux-pane-switch", "tmux-type-load"]
 
 
 def read_status(path):
@@ -97,11 +97,11 @@ class WorkloadTableTest(unittest.TestCase):
     def ctx(self, **kw):
         return WorkloadCtx(status_path=os.path.join(self.tmp, "status.jsonl"), workdir=self.tmp, **kw)
 
-    def test_workload_table_is_exactly_the_eleven(self):
-        self.assertEqual(sorted(WORKLOADS), sorted(ELEVEN))
+    def test_workload_table_is_exactly_the_thirteen(self):
+        self.assertEqual(sorted(WORKLOADS), sorted(THIRTEEN))
         kinds = {n: w.kind for n, w in WORKLOADS.items()}
         self.assertEqual(sorted(n for n, k in kinds.items() if k == "latency"),
-                         ["nvim-type", "shell-echo", "tmux-type"])
+                         ["nvim-type", "shell-echo", "tmux-pane-switch", "tmux-type", "tmux-type-load"])
 
     def test_every_command_is_an_argv_list(self):
         for name, w in sorted(WORKLOADS.items()):
@@ -171,12 +171,16 @@ class PayloadTest(unittest.TestCase):
                     proc.wait()
         self.assertEqual([e["event"] for e in read_status(self.status)], ["start", "end"])
 
-    def test_throughput_commands_carry_the_go_path(self):
+    def test_throughput_and_load_commands_carry_the_go_path(self):
         ctx = WorkloadCtx(status_path=self.status, workdir=self.tmp)
         for name, w in sorted(WORKLOADS.items()):
             argv = w.command(ctx)
-            if w.kind == "throughput":
+            if w.kind == "throughput" or w.load:
                 self.assertIn(ctx.go_path, " ".join(argv), name)
+        self.assertTrue(WORKLOADS["tmux-type-load"].load)
+        self.assertFalse(WORKLOADS["tmux-type-load"].e2e)          # the other pane keeps VNC busy
+        self.assertIsNotNone(WORKLOADS["tmux-type-load"].region)
+        self.assertEqual(WORKLOADS["tmux-pane-switch"].kind, "latency")
 
     def test_fullscreen_redraw_uses_alt_screen(self):
         ev = self.run_payload("fullscreen-redraw", "--seconds", "0.2", "--cols", "40", "--rows", "10")

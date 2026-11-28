@@ -1,12 +1,14 @@
 /* testwin: deterministic X client for the xtrp helper/RFB/proxy tests.
  *
- *   testwin --title T --delay-ms D --rect WxH [--damage-forever] [--second-paint-ms M]
+ *   testwin --title T --delay-ms D --rect WxH [--damage-forever] [--second-paint-ms M] [--noop-first]
  *
  * Maps a 400x300 window titled T. D ms after each KeyPress it fills a WxH rect
  * at (0,0), alternating black and white; with --second-paint-ms it fills the
  * same size at (0,100) M ms after that. Paints are scheduled, never slept on,
  * so the --damage-forever ticker (a 10x10 rect at (200,200) every 50 ms) keeps
- * running meanwhile. On SIGTERM/SIGINT it prints {"keys":count} and exits 0.
+ * running meanwhile. --noop-first also refills the rect in its current colour
+ * at once on each key: damage that changes no pixels. On SIGTERM/SIGINT it
+ * prints {"keys":count} and exits 0.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -30,7 +32,7 @@ int main(int argc, char **argv)
     const char *title = NULL;
     long delay_ms = 0, second_ms = -1;
     unsigned int rw = 10, rh = 10;
-    int damage_forever = 0, i, scr, keys = 0, phase = 0, tick_phase = 0;
+    int damage_forever = 0, noop_first = 0, painted = 0, i, scr, keys = 0, phase = 0, tick_phase = 0;
     Display *dpy;
     Window w;
     GC gc;
@@ -52,11 +54,14 @@ int main(int argc, char **argv)
             i++;
         } else if (strcmp(a, "--damage-forever") == 0) {
             damage_forever = 1;
+        } else if (strcmp(a, "--noop-first") == 0) {
+            noop_first = 1;
         } else if (strcmp(a, "--second-paint-ms") == 0 && v) {
             second_ms = strtol(v, NULL, 10);
             i++;
         } else {
-            die("usage: testwin --title T --delay-ms D --rect WxH [--damage-forever] [--second-paint-ms M]");
+            die("usage: testwin --title T --delay-ms D --rect WxH [--damage-forever] [--second-paint-ms M] "
+                "[--noop-first]");
         }
     }
     if (!title)
@@ -92,11 +97,18 @@ int main(int argc, char **argv)
             if (ev.type == KeyPress) {
                 keys++;
                 paint_at = now_ns() + (int64_t)delay_ms * 1000000LL;
+                if (noop_first) {
+                    /* the colour the rect has now: white background until the first real paint */
+                    XSetForeground(dpy, gc, painted && phase ? black : white);
+                    XFillRectangle(dpy, w, gc, 0, 0, rw, rh);
+                    XFlush(dpy);
+                }
             }
         }
         if (paint_at >= 0 && now_ns() >= paint_at) {
             XSetForeground(dpy, gc, phase ? white : black);
             phase ^= 1;
+            painted = 1;
             XFillRectangle(dpy, w, gc, 0, 0, rw, rh);
             XFlush(dpy);
             paint_at = -1;

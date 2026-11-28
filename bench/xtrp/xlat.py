@@ -120,18 +120,21 @@ def fill_screen(display, window):
 
 
 def latency(display, window, samples, interval_ms=120, timeout_ms=2000, require_focus=False, region=None,
-            detail=False):
+            detail=False, verify_pixels=False):
     """Keypress-to-damage latency per sample, in ms (None when no damage arrived).
 
-    `region` (x, y, w, h in window pixels) ignores damage elsewhere. With `detail`, each sample is
+    `region` (x, y, w, h in window pixels) ignores damage elsewhere; `verify_pixels` then takes the
+    first damage after which the region's pixels changed. With `detail`, each sample is
     {"ms", "paints"}: paints > 1 means a separate later paint followed the first damage, so the first
-    damage may not have been the echo."""
+    damage may not have been the echo (unless verify_pixels proved it was)."""
     args = ["latency", "--window", window, "--samples", samples,
             "--interval-ms", interval_ms, "--timeout-ms", timeout_ms]
     if require_focus:
         args.append("--require-focus")
     if region is not None:
         args += ["--region", ",".join(str(int(v)) for v in region)]
+    if verify_pixels:
+        args.append("--verify-pixels")
     budget = samples * (interval_ms + timeout_ms) / 1000.0 + 10.0
     try:
         records = run_json(args, display, budget)

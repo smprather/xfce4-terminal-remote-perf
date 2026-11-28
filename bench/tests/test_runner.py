@@ -15,7 +15,7 @@ from xtrp.runner import PRESETS, expand, run_preset
 from xtrp.terminal import descendants
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ALL11 = 11
+ALL13 = 13
 
 
 def key(**kw):
@@ -47,15 +47,15 @@ class PresetTest(unittest.TestCase):
 
     def test_matrix_sizes(self):
         self.assertEqual(len(expand("smoke", ["baseline"])), 2)
-        self.assertEqual(len(expand("quick", ["baseline"])), ALL11 * 3)
+        self.assertEqual(len(expand("quick", ["baseline"])), ALL13 * 3)
         self.assertEqual(len(expand("rtt-sweep", ["baseline"])), 4 * 4 * 5)
         # main block: (xvfb + xvnc*2 enc + x11remote*2 enc) * 4 WMs * 11 * 7, plus the sensitivity
         # block's 4 size/font combos minus the one already in the main block, * 11 * 5
-        self.assertEqual(len(expand("full", ["baseline"])), 5 * 4 * ALL11 * 7 + 3 * ALL11 * 5)
+        self.assertEqual(len(expand("full", ["baseline"])), 5 * 4 * ALL13 * 7 + 3 * ALL13 * 5)
         # comparing builds: iteration counts round up to even so A-B / B-A order is balanced
-        self.assertEqual(len(expand("quick", ["baseline", "other"])), 2 * ALL11 * 4)
-        self.assertEqual(len(expand("quick", ["baseline", "other"], iterations=1)), 2 * ALL11 * 2)
-        self.assertEqual(len(expand("quick", ["baseline"], iterations=1)), ALL11)
+        self.assertEqual(len(expand("quick", ["baseline", "other"])), 2 * ALL13 * 4)
+        self.assertEqual(len(expand("quick", ["baseline", "other"], iterations=1)), 2 * ALL13 * 2)
+        self.assertEqual(len(expand("quick", ["baseline"], iterations=1)), ALL13)
 
     def test_keys_follow_the_rules(self):
         for preset in PRESETS:
@@ -78,7 +78,7 @@ class PresetTest(unittest.TestCase):
 
     def test_wm_override_replaces_every_block(self):
         runs = expand("quick", ["baseline"], wms=["marco-comp"])
-        self.assertEqual(len(runs), ALL11 * 3)
+        self.assertEqual(len(runs), ALL13 * 3)
         self.assertEqual({k.wm for k, _, _ in runs}, {"marco-comp"})
 
     def test_smoke_shrinks_bulk_bytes(self):
@@ -161,6 +161,28 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(r["flags"]["errors"], [])
         self.assertGreater(r["metrics"]["drain_s"], 0.1)
         self.assertGreater(r["metrics"]["term_cpu_s"], 0.08, r["metrics"])
+
+    def test_tmux_pane_switch_and_typing_under_load(self):
+        # The spec's tmux latencies: switching panes, and typing in one pane while the other pane
+        # pours out bulk output (measured on the typing pane only).
+        need_tool("tmux")
+        block = {"displays": ["xvfb"], "wms": ["none"], "sizes": ["small"], "fonts": ["dejavu"],
+                 "workloads": ["tmux-pane-switch", "tmux-type-load"], "iterations": 1}
+        self.assertEqual(run_preset([block], ["baseline"], self.out), 2)
+        recs = {r["key"]["workload"]: r for r in load_records(self.out)}
+        for name, r in recs.items():
+            self.assertEqual(r["flags"]["errors"], [], name)
+            ms = r["metrics"]["latency_ms"]
+            self.assertEqual(len(ms), 40, name)
+            self.assertTrue(all(v is not None and 0 < v < 1000 for v in ms), (name, ms))
+        # under load the terminal repaints most of the window many times a second, so typing latency
+        # is pixel-checked on the typing pane's marker; the multi-paint count does not apply there
+        self.assertNotIn("latency_multi_paint", recs["tmux-type-load"]["metrics"])
+        self.assertIn("latency_multi_paint", recs["tmux-pane-switch"]["metrics"])
+        # the load really ran: dozens of window-sized repaints during the ~5 s of probes
+        load = recs["tmux-type-load"]
+        w, h = load["geometry"]["window_px"]
+        self.assertGreater(load["metrics"]["damage_area_px"], 30 * w * h, load["metrics"])
 
     def test_broken_build_is_recorded_and_matrix_continues(self):
         builds = os.path.join(self.out, "builds.json")

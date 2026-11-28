@@ -5,7 +5,7 @@
  *   xlat wait-window --title T --timeout-ms N        (exit 3 on timeout)
  *   xlat focus --window W
  *   xlat latency --window W --samples N --interval-ms M --timeout-ms T [--require-focus]
- *                [--region X,Y,W,H]                  (exit 2 when not focused)
+ *                [--region X,Y,W,H [--verify-pixels]] (exit 2 when not focused)
  *   xlat damage --window W     ({"ready":..} once armed, then rects until SIGTERM/SIGINT)
  *   xlat pick
  *   xlat geometry --window W  (position on the root, size, and the root's size)
@@ -322,6 +322,32 @@ typedef struct {
     int x, y, w, h;
 } WatchArea;
 
+/* The region's pixels, or NULL on an X error (e.g. the region left the window). */
+static XImage *grab(Display *dpy, Window w, const WatchArea *r)
+{
+    XImage *img;
+    g_xerr = 0;
+    img = XGetImage(dpy, w, r->x, r->y, (unsigned)r->w, (unsigned)r->h, AllPlanes, ZPixmap);
+    if (g_xerr && img) {
+        XDestroyImage(img);
+        return NULL;
+    }
+    return img;
+}
+
+static int images_differ(const XImage *a, const XImage *b)
+{
+    int y;
+    size_t row;
+    if (!a || !b || a->width != b->width || a->height != b->height || a->bits_per_pixel != b->bits_per_pixel)
+        return 1;
+    row = (size_t)a->width * (size_t)a->bits_per_pixel / 8;
+    for (y = 0; y < a->height; y++)
+        if (memcmp(a->data + (size_t)y * a->bytes_per_line, b->data + (size_t)y * b->bytes_per_line, row))
+            return 1;
+    return 0;
+}
+
 static int relevant(const XDamageNotifyEvent *de, const WatchArea *r)
 {
     if (!r->on)
@@ -332,9 +358,11 @@ static int relevant(const XDamageNotifyEvent *de, const WatchArea *r)
 
 /* Per key: the first damage (in `region`, if given) is the sample. Damage keeps being read until the
  * next key is due, and "paints" counts the separate bursts: more than one means the first damage may
- * not be the echo (e.g. a cursor repaint first), which the caller reports instead of trusting it. */
+ * not be the echo (e.g. a cursor repaint first), which the caller reports instead of trusting it.
+ * With `verify` (needs a region), the region is grabbed before each key and the sample is the first
+ * damage after which its pixels differ: the spec's pixel check, affordable on a small region. */
 static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, long timeout_ms,
-                        int require_focus, const WatchArea *region)
+                        int require_focus, const WatchArea *region, int verify)
 {
     int ev_base, maj, min, evb, errb;
     long i;
@@ -354,9 +382,17 @@ static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, 
         int paints = 0;
         KeyCode kc = keys[i % 2];
         XEvent ev;
+        XImage *before = NULL;
         XSync(dpy, False);
         while (XPending(dpy))
             XNextEvent(dpy, &ev);
+        if (verify) {
+            before = grab(dpy, w, region);
+            if (!before)
+                die("XGetImage of the --region failed (outside the window?)");
+            while (XPending(dpy))
+                XNextEvent(dpy, &ev);
+        }
         if (require_focus && !has_focus(dpy, w)) {
             printf("{\"error\":\"not-focused\"}\n");
             XDamageDestroy(dpy, dmg);
@@ -374,6 +410,16 @@ static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, 
             if (ev.type != ev_base + XDamageNotify || !relevant((XDamageNotifyEvent *)&ev, region))
                 continue;
             t = now_ns();
+            if (t_damage < 0 && verify) {
+                XImage *now = grab(dpy, w, region);
+                int changed = images_differ(before, now);
+                if (now)
+                    XDestroyImage(now);
+                if (!changed) {
+                    t_last = t;
+                    continue;
+                }
+            }
             if (t_damage < 0) {
                 t_damage = t_paint = t;
                 paints = 1;
@@ -391,6 +437,8 @@ static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, 
         else
             printf("{\"i\":%ld,\"inject_ns\":%lld,\"damage_ns\":%lld,\"paints\":%d,\"last_ns\":%lld}\n", i,
                    (long long)t_inject, (long long)t_damage, paints, (long long)t_paint);
+        if (before)
+            XDestroyImage(before);
         sleep_ns(t_inject + (int64_t)interval_ms * 1000000LL - now_ns());
     }
     XDamageDestroy(dpy, dmg);
@@ -482,7 +530,7 @@ int main(int argc, char **argv)
 {
     const char *mode, *title = NULL;
     long window = 0, samples = 40, interval_ms = 120, timeout_ms = 2000;
-    int require_focus = 0, i, rc;
+    int require_focus = 0, verify = 0, i, rc;
     WatchArea region = {0, 0, 0, 0, 0};
     Display *dpy;
 
@@ -511,6 +559,8 @@ int main(int argc, char **argv)
             i++;
         } else if (strcmp(a, "--require-focus") == 0) {
             require_focus = 1;
+        } else if (strcmp(a, "--verify-pixels") == 0) {
+            verify = 1;
         } else if (strcmp(a, "--region") == 0) {
             if (!v || sscanf(v, "%d,%d,%d,%d", &region.x, &region.y, &region.w, &region.h) != 4 ||
                 region.w <= 0 || region.h <= 0)
@@ -542,7 +592,9 @@ int main(int argc, char **argv)
     } else if (strcmp(mode, "latency") == 0) {
         if (!window)
             die("latency needs --window");
-        rc = mode_latency(dpy, (Window)window, samples, interval_ms, timeout_ms, require_focus, &region);
+        if (verify && !region.on)
+            die("--verify-pixels needs --region");
+        rc = mode_latency(dpy, (Window)window, samples, interval_ms, timeout_ms, require_focus, &region, verify);
     } else if (strcmp(mode, "damage") == 0) {
         if (!window)
             die("damage needs --window");

@@ -34,6 +34,7 @@ LATENCY_SAMPLES = 40
 E2E_SAMPLES = 20
 KEY_INTERVAL_MS = 120
 KEYSYMS = (0x61, 0xff08)            # a, BackSpace
+LOAD_WARMUP_S = 0.5                 # background output runs this long before latency probes start
 QUIET_MS = 300
 SETTLE_CAP_S = 10.0
 DRAIN_CAP_S = 10.0
@@ -137,11 +138,25 @@ class _Context(object):
                 "geometry": geometry, "metrics": metrics, "flags": flags}
 
 
-def _measure_latency(term, xs, rfb, metrics):
-    samples = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS, detail=True)
+def _region_px(region, geometry):
+    """A (col, row, cols, rows) cell rectangle as window pixels, from the run's geometry."""
+    if region is None:
+        return None
+    (w, h), (cols, rows) = geometry["window_px"], geometry["cells"]
+    cw, ch = w / float(cols), h / float(rows)
+    c0, r0, nc, nr = region
+    x, y = int(c0 * cw), int(r0 * ch)
+    return x, y, min(w - x, int(nc * cw) + 2), min(h - y, int(nr * ch) + 2)
+
+
+def _measure_latency(term, xs, rfb, metrics, wl, geometry):
+    region = _region_px(wl.region, geometry)
+    samples = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS, detail=True,
+                           region=region, verify_pixels=region is not None)
     metrics["latency_ms"] = [s["ms"] for s in samples]
-    metrics["latency_multi_paint"] = sum(1 for s in samples if s["paints"] > 1)
-    if rfb is not None:
+    if region is None:                # pixel-checked samples need no multi-paint caveat
+        metrics["latency_multi_paint"] = sum(1 for s in samples if s["paints"] > 1)
+    if rfb is not None and wl.e2e:
         e2e = []
         for i in range(E2E_SAMPLES):
             t0 = time.monotonic()
@@ -215,6 +230,9 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             g, cells = xlat.geometry(xs.display, term.window), term.cells()
             geometry = {"window_px": [g["width"], g["height"]], "position": [g["x"], g["y"]],
                         "cells": list(cells) if cells else None}
+            if wl.load:                   # background output first; the probes run under it
+                open(ctx.go_path, "w").close()
+                time.sleep(LOAD_WARMUP_S)
             if rfb is not None:
                 rfb.reset_stats()
             x11_0 = proxy.stats() if proxy is not None else None
@@ -223,7 +241,7 @@ def run_one(key, iteration, n_bytes, registry, xs, xlat_info, rfb, proxy, rc):
             tcpu0, xcpu0 = proc_cpu_s(term.pid), proc_cpu_s(xs.pid)
             dw.reset()
             if wl.kind == "latency":
-                _measure_latency(term, xs, rfb, metrics)
+                _measure_latency(term, xs, rfb, metrics, wl, geometry)
             else:
                 open(ctx.go_path, "w").close()
                 _measure_throughput(term, dw, ctx, wl, metrics, flags)

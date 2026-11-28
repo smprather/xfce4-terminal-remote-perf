@@ -39,6 +39,16 @@ class XlatTest(XvfbFixture):
         region = xlat.latency(self.display, win, samples=12, region=(0, 0, 100, 50))
         self.assertTrue(all(20.0 <= v <= 50.0 for v in region), region)
 
+    def test_verify_pixels_skips_damage_that_changes_nothing(self):
+        # testwin --noop-first repaints the rect in its current colour at once (damage, no change),
+        # then really changes it 25 ms later: only the pixel check sees the real echo.
+        win = self.start_testwin(title="noop", delay_ms=25, rect="40x20", noop_first=True)
+        xlat.focus(self.display, win)
+        first = xlat.latency(self.display, win, samples=6, region=(0, 0, 40, 20))
+        self.assertTrue(all(v < 10.0 for v in first), first)
+        real = xlat.latency(self.display, win, samples=6, region=(0, 0, 40, 20), verify_pixels=True)
+        self.assertTrue(all(25.0 <= v <= 55.0 for v in real), real)
+
     def test_require_focus_refuses_and_injects_nothing(self):
         win = self.start_testwin(title="tw2", delay_ms=0, rect="10x10")
         other = self.start_testwin(title="other", delay_ms=0, rect="10x10")

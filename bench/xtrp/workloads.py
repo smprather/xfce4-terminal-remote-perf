@@ -230,7 +230,11 @@ GENERATORS = {"bulk-ascii": gen_bulk_ascii, "sgr-color": gen_sgr, "unicode": gen
 
 # --------------------------------------------------------------------------- workload table
 
-Workload = collections.namedtuple("Workload", "name kind command timeout_s")
+# region: (col, row, cols, rows) of the terminal where latency is taken, pixel-checked (None: the
+# first damage anywhere); e2e: also measure end to end over VNC; load: the command starts background
+# output on the go file, which the runner creates before the latency probes.
+Workload = collections.namedtuple("Workload", "name kind command timeout_s region e2e load")
+Workload.__new__.__defaults__ = (None, True, False)
 
 
 class WorkloadCtx(object):
@@ -282,6 +286,22 @@ def _tmux_bulk_split(ctx):
                                                         ";", "split-window", "-h", "-b", left)
 
 
+def _tmux_pane_switch(ctx):
+    """Two idle panes; `a` and BackSpace are bound (no prefix) to switch to the other pane."""
+    switch = ["select-pane", "-t", ":.+"]
+    return _env_prefix(ctx, _tmux_env(ctx)) + tmux_argv(
+        ctx.tmux_socket, "-f", TMUX_CONF, "new-session", "cat", ";", "split-window", "-v", "cat",
+        ";", "bind-key", "-n", "a", *switch, ";", "bind-key", "-n", "BSpace", *switch)
+
+
+def _tmux_type_load(ctx):
+    """Typing in the top pane (a cursor-hidden key marker) while the bottom pane pours out output."""
+    marker = " ".join(shlex.quote(a) for a in _payload(ctx, "key-marker"))
+    load = " ".join(shlex.quote(a) for a in _payload(ctx, "bulk-loop"))
+    return _env_prefix(ctx, _tmux_env(ctx)) + tmux_argv(ctx.tmux_socket, "-f", TMUX_CONF, "new-session", marker,
+                                                        ";", "split-window", "-d", "-v", load)
+
+
 WORKLOADS = {w.name: w for w in (
     Workload("shell-echo", "latency",
              lambda ctx: _env_prefix(ctx, "PS1=$ ") + ["bash", "--norc", "--noprofile", "-i"], 60),
@@ -299,6 +319,10 @@ WORKLOADS = {w.name: w for w in (
     Workload("nvim-scroll", "throughput",
              lambda ctx: _payload(ctx, "nvim-scroll", "--steps", str(SCROLL_STEPS)), 300),
     Workload("tmux-bulk-split", "throughput", _tmux_bulk_split, 600),
+    Workload("tmux-pane-switch", "latency", _tmux_pane_switch, 60),
+    # Under load the terminal repaints most of the window many times a second, so the sample is the
+    # first paint that changes the marker's 16 cells (row 1 of the top pane).
+    Workload("tmux-type-load", "latency", _tmux_type_load, 60, region=(0, 0, 20, 1), e2e=False, load=True),
 )}
 
 
@@ -352,6 +376,18 @@ def _redraw_frames(cols, rows, seconds, sync):
     return frames, total
 
 
+def _key_marker():
+    """Typing target for tmux-type-load: cursor hidden (so tmux's redraws of the other pane never
+    repaint it here), and every read from the keyboard toggles a block at row 1."""
+    import tty
+    tty.setraw(0)
+    _write_all(b"\x1b[?25l\x1b[2J")
+    on = False
+    while os.read(0, 1024):
+        on = not on
+        _write_all(b"\x1b[1;1H" + (b"#" * 16 if on else b" " * 16))
+
+
 def _await_go(go, timeout_s=600.0):
     """Block until the runner creates the go file (startup has settled), if one was given."""
     if not go:
@@ -367,6 +403,13 @@ def run_payload(name, status, n_bytes=None, lines=None, seconds=None, cols=None,
 
     The data is generated first; the start event and the writing wait for the go file."""
     sync = os.environ.get("XTRP_SYNC") == "1"
+    if name == "key-marker":
+        return _key_marker()
+    if name == "bulk-loop":
+        data = b"".join(gen_bulk_ascii(8 * MIB))
+        _await_go(go)
+        while True:                       # until the run's tmux server is stopped
+            _write_all(data)
     if name == "nvim-scroll":
         src = os.path.join(os.path.dirname(os.path.abspath(status)), "xtrp-scroll.c")
         with open(src, "w") as f:

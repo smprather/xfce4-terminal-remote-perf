@@ -83,7 +83,8 @@ class XvfbFixture(unittest.TestCase):
         self.display_number = self._xserver.number
         self.addCleanup(self._stop_all)
 
-    def start_testwin(self, title, delay_ms, rect, damage_forever=False, display=None, second_paint_ms=None):
+    def start_testwin(self, title, delay_ms, rect, damage_forever=False, display=None, second_paint_ms=None,
+                      noop_first=False):
         """Start testwin (connected to `display`, default the fixture's server); return its window."""
         argv = [os.path.join(xlat.BIN_DIR, "testwin"), "--title", title,
                 "--delay-ms", str(delay_ms), "--rect", rect]
@@ -91,6 +92,8 @@ class XvfbFixture(unittest.TestCase):
             argv.append("--damage-forever")
         if second_paint_ms is not None:
             argv += ["--second-paint-ms", str(second_paint_ms)]
+        if noop_first:
+            argv.append("--noop-first")
         xlat.ensure_built()
         proc = subprocess.Popen(argv, env=platform.child_env(display or self.display, self.tmp),
                                 stdout=subprocess.PIPE, start_new_session=True)
