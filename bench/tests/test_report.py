@@ -55,11 +55,24 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(r["regression"])
 
     def test_noise_30_percent_suppresses_a_minus_20_delta(self):
-        base = [8.0 + 0.4 * i for i in range(11)]          # median 10, p10 8.4, p90 11.6 -> noise 32%
-        r = row(compare([rec("b", {"latency_ms": base})], [rec("c", {"latency_ms": [12.0] * 11})]), "latency_ms")
+        # run-to-run spread: per-run medians 8.0 .. 12.0 -> median 10, p10 8.4, p90 11.6 -> noise 32%
+        base = [rec("b", {"latency_ms": [8.0 + 0.4 * i] * 5}, iteration=i) for i in range(11)]
+        cand = [rec("c", {"latency_ms": [12.0] * 5}, iteration=i) for i in range(11)]
+        r = row(compare(base, cand), "latency_ms")
         self.assertAlmostEqual(r["noise_pct"], 32.0)
         self.assertAlmostEqual(r["delta_pct"], -20.0)
         self.assertFalse(r["regression"])
+
+    def test_latency_noise_band_is_run_to_run_not_keystroke_jitter(self):
+        # A fast terminal: every run's samples spread 0.4-1.8 ms around a stable ~1 ms median.
+        jitter = [0.4, 0.6, 0.8, 0.9, 1.0, 1.0, 1.1, 1.2, 1.4, 1.8]
+        base = [rec("b", {"latency_ms": jitter}, iteration=i) for i in range(4)]
+        cand = [rec("c", {"latency_ms": [v * 1.5 for v in jitter]}, iteration=i) for i in range(4)]
+        r = row(compare(base, cand), "latency_ms")
+        self.assertEqual(r["base"]["n"], 4)                  # one median per run
+        self.assertAlmostEqual(r["noise_pct"], 0.0)
+        self.assertAlmostEqual(r["delta_pct"], -50.0)
+        self.assertTrue(r["regression"])
 
     def test_scalar_metrics_summarize_across_iterations(self):
         base = [rec("b", {"total_s": v}, iteration=i) for i, v in enumerate((100.0, 110.0, 120.0))]
@@ -68,14 +81,33 @@ class CompareTest(unittest.TestCase):
         self.assertEqual((r["base"]["n"], r["base"]["median"]), (3, 110.0))
         self.assertTrue(r["regression"])
 
-    def test_missing_key_gets_a_note_and_no_flag(self):
+    def test_gated_metric_missing_in_cand_is_a_regression(self):
         rows = compare([rec("b", {"latency_ms": [10.0]}), rec("b", {"startup_ms": 50.0}, workload="nvim-type")],
                        [rec("c", {"latency_ms": [99.0]}, workload="tmux-type")])
-        notes = {(r["key"]["workload"], r.get("note")) for r in rows}
-        self.assertIn(("shell-echo", "missing in cand"), notes)
-        self.assertIn(("nvim-type", "missing in cand"), notes)
-        self.assertIn(("tmux-type", "missing in base"), notes)
-        self.assertFalse(any(r["regression"] for r in rows))
+        notes = {(r["key"]["workload"], r.get("note"), r["regression"]) for r in rows}
+        self.assertIn(("shell-echo", "missing in cand", True), notes)       # gated: the candidate lost it
+        self.assertIn(("nvim-type", "missing in cand", False), notes)       # informational
+        self.assertIn(("tmux-type", "missing in base", False), notes)       # new in the candidate
+        self.assertFalse(any(r["regression"] for r in compare(
+            [rec("b", {"latency_ms": [10.0]})], [rec("c", {"latency_ms": [99.0]}, tag="host")],
+            cross_platform=True)))
+
+    def test_errored_records_stay_out_of_the_medians(self):
+        base = [rec("b", {"latency_ms": [10.0]})]
+        cand = [rec("c", {"latency_ms": [10.0]}), rec("c", {"latency_ms": [50.0]}, iteration=1, errors=["boom"])]
+        r = row(compare(base, cand), "latency_ms")
+        self.assertEqual((r["cand"]["n"], r["cand"]["median"]), (1, 10.0))
+
+    def test_more_failed_runs_or_drain_timeouts_in_cand_is_a_regression(self):
+        base = [rec("b", {"latency_ms": [10.0]}, iteration=i) for i in range(2)]
+        cand = [rec("c", {"latency_ms": [10.0]}), rec("c", {}, iteration=1, errors=["terminal died"])]
+        r = row(compare(base, cand), "failed_runs")
+        self.assertEqual((r["base"]["median"], r["cand"]["median"]), (0, 1))
+        self.assertTrue(r["regression"])
+        slow = dict(rec("c", {"latency_ms": [10.0]}, iteration=1), flags={"drain_timeout": True, "errors": []})
+        r = row(compare(base, [rec("c", {"latency_ms": [10.0]}), slow]), "drain_timeouts")
+        self.assertTrue(r["regression"])
+        self.assertEqual([x for x in compare(base, base) if x["metric"] in ("failed_runs", "drain_timeouts")], [])
 
     def test_copyrect_area_is_informational_and_frames_higher_is_better(self):
         self.assertEqual(METRIC_DIRECTION["vnc_copyrect_area"], 0)
@@ -106,9 +138,23 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(r["regression"])
 
     def test_zero_base_median_does_not_divide_by_zero(self):
-        r = row(compare([rec("b", {"xserver_cpu_s": 0.0})], [rec("c", {"xserver_cpu_s": 0.5})]), "xserver_cpu_s")
+        r = row(compare([rec("b", {"xserver_cpu_s": 0.0})], [rec("c", {"xserver_cpu_s": 0.0})]), "xserver_cpu_s")
         self.assertIsNone(r["delta_pct"])
         self.assertFalse(r["regression"])
+
+    def test_zero_base_flags_a_new_cost_above_the_base_spread(self):
+        # e.g. a candidate adding a per-frame XSync over T2: x11_replies 0 -> 6
+        base = [rec("b", {"x11_replies": 0}, workload="bulk-ascii", iteration=i) for i in range(4)]
+        r = row(compare(base, [rec("c", {"x11_replies": 6}, workload="bulk-ascii")]), "x11_replies", "bulk-ascii")
+        self.assertIsNone(r["delta_pct"])
+        self.assertEqual(r["note"], "base median 0")
+        self.assertTrue(r["regression"])
+        spread = [rec("b", {"x11_replies": v}, workload="bulk-ascii", iteration=i) for i, v in enumerate((0, 0, 0, 4))]
+        self.assertFalse(row(compare(spread, [rec("c", {"x11_replies": 1}, workload="bulk-ascii")]),
+                             "x11_replies", "bulk-ascii")["regression"])        # within the base's p90
+        self.assertFalse(row(compare([rec("b", {"frames": 0}, workload="fullscreen-redraw")],
+                                     [rec("c", {"frames": 5}, workload="fullscreen-redraw")]),
+                             "frames", "fullscreen-redraw")["regression"])      # higher is better
 
     def test_platform_mismatch(self):
         with self.assertRaises(PlatformMismatch):
@@ -171,6 +217,21 @@ class CliTest(unittest.TestCase):
         r = self.run_cli(d, d, "--base-build", "baseline", "--cand-build", "nope")
         self.assertEqual(r.returncode, 2)
         self.assertIn("no records for build nope", r.stderr)
+
+    def test_refuses_empty_or_missing_inputs(self):
+        base = self.write("base", [rec("b", {"latency_ms": [10.0]})])
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        for args in ((base, empty), (empty, base), (base, os.path.join(self.tmp, "typo"))):
+            r = self.run_cli(*args)
+            self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
+            self.assertIn("no records", r.stderr)
+
+    def test_refuses_mixed_builds_without_filters(self):
+        d = self.write("mixed", [rec("baseline", {"latency_ms": [10.0]}), rec("cand", {"latency_ms": [13.0]})])
+        r = self.run_cli(d, d)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("--base-build", r.stderr)
 
     def test_markdown_prints_under_the_c_locale(self):
         base = self.write("b", [rec("b", {"latency_ms": [10.0]})])

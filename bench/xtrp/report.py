@@ -1,10 +1,12 @@
 """Baseline-vs-candidate comparison with a noise-aware regression flag.
 
-Rows are grouped by RunKey minus `build`, plus the metric name. List metrics
-(latency samples) are pooled across iterations; scalar metrics are summarized
-across iterations. A row regresses when the candidate is worse than the
-baseline median by more than max(threshold, baseline noise band), where the
-noise band is 100*(p90-p10)/median of the baseline.
+Rows are grouped by RunKey minus `build`, plus the metric name. Each run contributes one value per
+metric: a list metric (latency samples) contributes its median, so the noise band is run-to-run spread
+rather than keystroke jitter. Records with errors are left out of the medians and counted instead. A
+row regresses when the candidate is worse than the baseline median by more than max(threshold,
+baseline noise band), where the noise band is 100*(p90-p10)/median of the baseline. A zero baseline
+regresses when the candidate rises above the baseline's p90; a gated metric the candidate lost, and
+more failed runs or drain timeouts in the candidate, regress too.
 """
 
 import collections
@@ -30,7 +32,9 @@ METRIC_DIRECTION.update({
     # median of a few samples cannot hold 5%; startup is not a goal of this project either.
     # startup_x11_replies (deterministic, matters over a remote X link) stays gated.
     "startup_ms": 0,
+    "failed_runs": -1, "drain_timeouts": -1,     # health rows: any increase in the candidate regresses
 })
+HEALTH = ("failed_runs", "drain_timeouts")
 
 
 
@@ -59,16 +63,35 @@ def _tags(records):
     return sorted({r.get("platform", {}).get("tag", "?") for r in records})
 
 
+def _group(r):
+    return tuple(r["key"][f] for f in KEY_FIELDS)
+
+
 def _collect(records):
-    """OrderedDict {group key tuple: {metric: [values]}}."""
+    """OrderedDict {group key tuple: {metric: [one value per run]}}, errored runs left out."""
     out = collections.OrderedDict()
     for r in records:
-        bucket = out.setdefault(tuple(r["key"][f] for f in KEY_FIELDS), {})
+        if r.get("flags", {}).get("errors"):
+            continue
+        bucket = out.setdefault(_group(r), {})
         for metric, value in r.get("metrics", {}).items():
             if isinstance(value, list):
-                bucket.setdefault(metric, []).extend(v for v in value if v is not None)
+                med = summarize([v for v in value if v is not None])["median"]
+                if med is not None:
+                    bucket.setdefault(metric, []).append(med)
             elif isinstance(value, (int, float)) and not isinstance(value, bool):
                 bucket.setdefault(metric, []).append(value)
+    return out
+
+
+def _health(records):
+    """OrderedDict {group key tuple: {"failed_runs": n, "drain_timeouts": n}} over every record."""
+    out = collections.OrderedDict()
+    for r in records:
+        h = out.setdefault(_group(r), dict.fromkeys(HEALTH, 0))
+        flags = r.get("flags", {})
+        h["failed_runs"] += 1 if flags.get("errors") else 0
+        h["drain_timeouts"] += 1 if flags.get("drain_timeout") else 0
     return out
 
 
@@ -77,11 +100,13 @@ def _judge(row, metric, threshold_pct, cross_platform):
     if b is None or c is None:
         row["note"] = "no data"
         return
+    sign = direction(metric, row["key"]["workload"])
     if b == 0:
         if c != 0:
             row["note"] = "base median 0"
+            if sign < 0 and not cross_platform:
+                row["regression"] = c > max(0, row["base"]["p90"])
         return
-    sign = direction(metric, row["key"]["workload"])
     change = (c - b) / abs(b) * 100.0
     row["delta_pct"] = -change if sign < 0 else change
     row["noise_pct"] = 100.0 * (row["base"]["p90"] - row["base"]["p10"]) / abs(b)
@@ -95,7 +120,11 @@ def compare(base, cand, threshold_pct=5.0, cross_platform=False):
     if not cross_platform and len(set(base_tags) | set(cand_tags)) > 1:
         raise PlatformMismatch(base_tags, cand_tags)
     b_groups, c_groups = _collect(base), _collect(cand)
-    order = list(b_groups) + [k for k in c_groups if k not in b_groups]
+    b_health, c_health = _health(base), _health(cand)
+    order = []
+    for gk in list(b_groups) + list(c_groups) + list(b_health) + list(c_health):
+        if gk not in order:
+            order.append(gk)
     rows = []
     for gk in order:
         bm, cm = b_groups.get(gk, {}), c_groups.get(gk, {})
@@ -107,9 +136,18 @@ def compare(base, cand, threshold_pct=5.0, cross_platform=False):
                 row["note"] = "missing in base"
             elif metric not in cm:
                 row["note"] = "missing in cand"
+                row["regression"] = direction(metric, gk[-1]) != 0 and not cross_platform
             else:
                 _judge(row, metric, threshold_pct, cross_platform)
             rows.append(row)
+        bh = b_health.get(gk, dict.fromkeys(HEALTH, 0))
+        ch = c_health.get(gk, dict.fromkeys(HEALTH, 0))
+        for metric in HEALTH:
+            if bh[metric] or ch[metric]:
+                rows.append({"key": dict(zip(KEY_FIELDS, gk)), "metric": metric,
+                             "base": summarize([bh[metric]]), "cand": summarize([ch[metric]]),
+                             "delta_pct": None, "noise_pct": None, "note": "run health",
+                             "regression": ch[metric] > bh[metric] and not cross_platform})
     return rows
 
 
@@ -148,9 +186,11 @@ def render_markdown(rows, cross_platform=False, preamble=()):
     if regressions:
         for r in regressions:
             k = r["key"]
-            lines.append("- %s `%s` (%s/%s rtt=%s %s): %s -> %s (%s%%, noise %.1f%%)" % (
+            lines.append("- %s `%s` (%s/%s rtt=%s %s): %s -> %s (%s%%, noise %s%%)%s" % (
                 k["workload"], r["metric"], k["display_kind"], k["wm"], k["rtt_ms"], _config(k),
-                _fmt(r["base"]["median"]), _fmt(r["cand"]["median"]), _pct(r["delta_pct"]), r["noise_pct"]))
+                _fmt(r["base"]["median"]), _fmt(r["cand"]["median"]), _pct(r["delta_pct"]),
+                "-" if r["noise_pct"] is None else "%.1f" % r["noise_pct"],
+                " [%s]" % r["note"] if r.get("note") else ""))
     else:
         lines.append("No regressions.")
     lines.append("")

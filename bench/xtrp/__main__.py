@@ -28,18 +28,24 @@ def _cmd_run(args):
 def _cmd_report(args):
     from xtrp import report
     from xtrp.model import load_records
-    base, cand = load_records(args.base), load_records(args.cand)
-    for label, build in (("base", args.base_build), ("cand", args.cand_build)):
-        if build is None:
-            continue
-        picked = [r for r in (base if label == "base" else cand) if r["key"]["build"] == build]
-        if not picked:
-            sys.stderr.write("no records for build %s in %s\n" % (build, args.base if label == "base" else args.cand))
+    sides = {}
+    for label, path, build in (("base", args.base, args.base_build), ("cand", args.cand, args.cand_build)):
+        recs = load_records(path) if os.path.isdir(path) else []
+        if not recs:
+            sys.stderr.write("no records in %s\n" % path)
             return 2
-        if label == "base":
-            base = picked
-        else:
-            cand = picked
+        if build is not None:
+            recs = [r for r in recs if r["key"]["build"] == build]
+            if not recs:
+                sys.stderr.write("no records for build %s in %s\n" % (build, path))
+                return 2
+        builds = sorted({r["key"]["build"] for r in recs})
+        if len(builds) > 1:
+            sys.stderr.write("%s holds several builds (%s); pick one with --%s-build\n"
+                             % (path, ", ".join(builds), label))
+            return 2
+        sides[label] = recs
+    base, cand = sides["base"], sides["cand"]
     try:
         rows = report.compare(base, cand, threshold_pct=args.threshold, cross_platform=args.cross_platform)
     except report.PlatformMismatch as e:
