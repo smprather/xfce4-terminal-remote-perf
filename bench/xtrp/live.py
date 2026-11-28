@@ -23,8 +23,12 @@ def live_latency(display, window=None, pick=False, samples=40):
             raise RuntimeError("no --window/--pick and $WINDOWID is not set")
         window = int(os.environ["WINDOWID"])
     samples += samples % 2              # equal numbers of 'a' and BackSpace: no net input
-    raw = xlat.latency(display, window, samples, require_focus=True)
-    return {"window": window, "latency_ms": summarize(raw), "raw": raw}
+    detail = xlat.latency(display, window, samples, require_focus=True, detail=True)
+    raw = [d["ms"] for d in detail]
+    # Keys followed by a separate later paint (e.g. a blinking cursor shown again before the echo):
+    # their first damage may not be the echo, so their latency may be understated.
+    multi = sum(1 for d in detail if d["paints"] > 1)
+    return {"window": window, "latency_ms": summarize(raw), "raw": raw, "multi_paint": multi}
 
 
 def _cmdline(pid):

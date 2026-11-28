@@ -115,6 +115,10 @@ def _cmd_live(args):
         except xlat.NotFocusedError:
             sys.stderr.write("refused: the target window does not have keyboard focus; nothing was typed\n")
             return 2
+        if res["multi_paint"]:
+            sys.stderr.write("note: %d of %d keys painted twice (a blinking cursor?), so their latency may be\n"
+                             "understated; turn cursor blinking off in that terminal and run this again\n"
+                             % (res["multi_paint"], len(res["raw"])))
     else:
         sys.stderr.write("Watching window %d for %d s: run your workload in it now.\n" % (args.window, args.seconds))
         res = live.live_watch(display, args.window, args.seconds)

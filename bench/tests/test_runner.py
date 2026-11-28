@@ -101,6 +101,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(len(recs), 2)
         echo = [r for r in recs if r["key"]["workload"] == "shell-echo"][0]
         self.assertEqual(len(echo["metrics"]["latency_ms"]), 40)
+        self.assertEqual(echo["metrics"]["latency_multi_paint"], 0)    # a shell echo paints once
         self.assertTrue(all(v is not None and 0 < v < 1000 for v in echo["metrics"]["latency_ms"]))
         bulk = [r for r in recs if r["key"]["workload"] == "bulk-ascii"][0]
         self.assertGreater(bulk["metrics"]["throughput_mb_s"], 0)

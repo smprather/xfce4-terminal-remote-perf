@@ -37,7 +37,7 @@ static int64_t now_ns(void)
     return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
-static void sleep_ns(int64_t ns)
+static inline void sleep_ns(int64_t ns)
 {
     struct timespec ts;
     if (ns <= 0)

@@ -5,7 +5,7 @@
  *   xlat wait-window --title T --timeout-ms N        (exit 3 on timeout)
  *   xlat focus --window W
  *   xlat latency --window W --samples N --interval-ms M --timeout-ms T [--require-focus]
- *                                                    (exit 2 when not focused)
+ *                [--region X,Y,W,H]                  (exit 2 when not focused)
  *   xlat damage --window W     ({"ready":..} once armed, then rects until SIGTERM/SIGINT)
  *   xlat pick
  *   xlat geometry --window W  (position on the root, size, and the root's size)
@@ -314,8 +314,27 @@ static Damage damage_on(Display *dpy, Window w, int *event_base)
     return dmg;
 }
 
+/* Damage from separate paints is at least this far apart; one paint's rectangles arrive together. */
+#define PAINT_GAP_NS 2000000LL
+
+typedef struct {
+    int on;
+    int x, y, w, h;
+} WatchArea;
+
+static int relevant(const XDamageNotifyEvent *de, const WatchArea *r)
+{
+    if (!r->on)
+        return 1;
+    return de->area.x < r->x + r->w && r->x < de->area.x + (int)de->area.width &&
+           de->area.y < r->y + r->h && r->y < de->area.y + (int)de->area.height;
+}
+
+/* Per key: the first damage (in `region`, if given) is the sample. Damage keeps being read until the
+ * next key is due, and "paints" counts the separate bursts: more than one means the first damage may
+ * not be the echo (e.g. a cursor repaint first), which the caller reports instead of trusting it. */
 static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, long timeout_ms,
-                        int require_focus)
+                        int require_focus, const WatchArea *region)
 {
     int ev_base, maj, min, evb, errb;
     long i;
@@ -331,7 +350,8 @@ static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, 
     keys[0] = XKeysymToKeycode(dpy, XK_a);
     keys[1] = XKeysymToKeycode(dpy, XK_BackSpace);
     for (i = 0; i < samples && !g_stop; i++) {
-        int64_t t_inject, t_damage = -1, deadline;
+        int64_t t_inject, t_damage = -1, t_last = -1, t_paint = -1, deadline, collect_until;
+        int paints = 0;
         KeyCode kc = keys[i % 2];
         XEvent ev;
         XSync(dpy, False);
@@ -347,18 +367,30 @@ static int mode_latency(Display *dpy, Window w, long samples, long interval_ms, 
         XTestFakeKeyEvent(dpy, kc, False, CurrentTime);
         XFlush(dpy);
         deadline = t_inject + (int64_t)timeout_ms * 1000000LL;
-        while (wait_event(dpy, deadline)) {
+        collect_until = t_inject + (int64_t)interval_ms * 1000000LL;
+        while (wait_event(dpy, t_damage < 0 ? deadline : collect_until)) {
+            int64_t t;
             XNextEvent(dpy, &ev);
-            if (ev.type == ev_base + XDamageNotify) {
-                t_damage = now_ns();
-                break;
+            if (ev.type != ev_base + XDamageNotify || !relevant((XDamageNotifyEvent *)&ev, region))
+                continue;
+            t = now_ns();
+            if (t_damage < 0) {
+                t_damage = t_paint = t;
+                paints = 1;
+                if (collect_until < t + 20000000LL)
+                    collect_until = t + 20000000LL;
+            } else if (t - t_last > PAINT_GAP_NS) {
+                paints++;
+                t_paint = t;
             }
+            t_last = t;
         }
         if (t_damage < 0)
-            printf("{\"i\":%ld,\"inject_ns\":%lld,\"damage_ns\":null}\n", i, (long long)t_inject);
+            printf("{\"i\":%ld,\"inject_ns\":%lld,\"damage_ns\":null,\"paints\":0}\n", i,
+                   (long long)t_inject);
         else
-            printf("{\"i\":%ld,\"inject_ns\":%lld,\"damage_ns\":%lld}\n", i, (long long)t_inject,
-                   (long long)t_damage);
+            printf("{\"i\":%ld,\"inject_ns\":%lld,\"damage_ns\":%lld,\"paints\":%d,\"last_ns\":%lld}\n", i,
+                   (long long)t_inject, (long long)t_damage, paints, (long long)t_paint);
         sleep_ns(t_inject + (int64_t)interval_ms * 1000000LL - now_ns());
     }
     XDamageDestroy(dpy, dmg);
@@ -451,6 +483,7 @@ int main(int argc, char **argv)
     const char *mode, *title = NULL;
     long window = 0, samples = 40, interval_ms = 120, timeout_ms = 2000;
     int require_focus = 0, i, rc;
+    WatchArea region = {0, 0, 0, 0, 0};
     Display *dpy;
 
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -478,6 +511,12 @@ int main(int argc, char **argv)
             i++;
         } else if (strcmp(a, "--require-focus") == 0) {
             require_focus = 1;
+        } else if (strcmp(a, "--region") == 0) {
+            if (!v || sscanf(v, "%d,%d,%d,%d", &region.x, &region.y, &region.w, &region.h) != 4 ||
+                region.w <= 0 || region.h <= 0)
+                die("--region wants X,Y,W,H");
+            region.on = 1;
+            i++;
         } else {
             fprintf(stderr, "xlat: unknown option %s\n", a);
             return 1;
@@ -503,7 +542,7 @@ int main(int argc, char **argv)
     } else if (strcmp(mode, "latency") == 0) {
         if (!window)
             die("latency needs --window");
-        rc = mode_latency(dpy, (Window)window, samples, interval_ms, timeout_ms, require_focus);
+        rc = mode_latency(dpy, (Window)window, samples, interval_ms, timeout_ms, require_focus, &region);
     } else if (strcmp(mode, "damage") == 0) {
         if (!window)
             die("damage needs --window");

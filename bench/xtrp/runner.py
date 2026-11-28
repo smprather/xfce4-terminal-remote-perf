@@ -138,7 +138,9 @@ class _Context(object):
 
 
 def _measure_latency(term, xs, rfb, metrics):
-    metrics["latency_ms"] = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS)
+    samples = xlat.latency(xs.display, term.window, LATENCY_SAMPLES, KEY_INTERVAL_MS, detail=True)
+    metrics["latency_ms"] = [s["ms"] for s in samples]
+    metrics["latency_multi_paint"] = sum(1 for s in samples if s["paints"] > 1)
     if rfb is not None:
         e2e = []
         for i in range(E2E_SAMPLES):

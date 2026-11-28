@@ -22,7 +22,10 @@ KEY_FIELDS = ("display_kind", "wm", "rtt_ms", "vnc_encoding", "size", "font", "v
 METRIC_DIRECTION = {m: -1 for m in (
     "term_cpu_s", "xserver_cpu_s", "damage_area_px", "latency_ms", "e2e_latency_ms",
     "total_s", "vnc_bytes", "x11_c2s_bytes", "x11_s2c_bytes", "x11_replies", "x11_requests",
-    "x11_image_bytes", "startup_x11_replies")}
+    "x11_image_bytes", "startup_x11_replies",
+    # keys followed by a separate later paint: the first damage may not be the echo, so more of them
+    # in the candidate means its latency_ms needs checking before it is believed
+    "latency_multi_paint")}
 METRIC_DIRECTION.update({
     "throughput_mb_s": 1,
     "frames": 1,                 # fullscreen-redraw frames written in its fixed time: more = kept up

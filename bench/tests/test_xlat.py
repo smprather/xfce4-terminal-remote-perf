@@ -17,6 +17,28 @@ class XlatTest(XvfbFixture):
         self.assertEqual(len(ms), 10)
         self.assertTrue(all(v is not None and 30.0 <= v <= 60.0 for v in ms), ms)
 
+    def test_a_separate_later_paint_is_counted(self):
+        # The first damage is only the echo when a key paints once; a second, later paint means it
+        # may not be (e.g. a cursor repaint before the echo), and the sample says so.
+        once = self.start_testwin(title="once", delay_ms=5, rect="20x20")
+        xlat.focus(self.display, once)
+        s1 = xlat.latency(self.display, once, samples=6, detail=True)
+        self.assertEqual([s["paints"] for s in s1], [1] * 6, s1)
+        twice = self.start_testwin(title="twice", delay_ms=5, rect="20x20", second_paint_ms=30)
+        xlat.focus(self.display, twice)
+        s2 = xlat.latency(self.display, twice, samples=6, detail=True)
+        self.assertEqual([s["paints"] for s in s2], [2] * 6, s2)
+        self.assertTrue(all(5.0 <= s["ms"] < 30.0 for s in s2), s2)
+
+    def test_region_ignores_damage_elsewhere(self):
+        # testwin --damage-forever paints (200,200) every 50 ms; the key paints (0,0) after 20 ms.
+        win = self.start_testwin(title="busy", delay_ms=20, rect="50x20", damage_forever=True)
+        xlat.focus(self.display, win)
+        anywhere = xlat.latency(self.display, win, samples=12)
+        self.assertTrue(any(v < 18.0 for v in anywhere), anywhere)         # the ticker wins sometimes
+        region = xlat.latency(self.display, win, samples=12, region=(0, 0, 100, 50))
+        self.assertTrue(all(20.0 <= v <= 50.0 for v in region), region)
+
     def test_require_focus_refuses_and_injects_nothing(self):
         win = self.start_testwin(title="tw2", delay_ms=0, rect="10x10")
         other = self.start_testwin(title="other", delay_ms=0, rect="10x10")

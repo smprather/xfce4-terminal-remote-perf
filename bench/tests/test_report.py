@@ -133,6 +133,11 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(row(rows, "damage_area_px", workload="box-drawing")["regression"])
         self.assertTrue(row(rows, "damage_area_px", workload="shell-echo")["regression"])
 
+    def test_more_multi_paint_keystrokes_in_cand_is_flagged(self):
+        base = [rec("b", {"latency_ms": [10.0], "latency_multi_paint": 0}, iteration=i) for i in range(4)]
+        cand = [rec("c", {"latency_ms": [10.0], "latency_multi_paint": 9}, iteration=i) for i in range(4)]
+        self.assertTrue(row(compare(base, cand), "latency_multi_paint")["regression"])
+
     def test_unknown_metric_is_informational(self):
         r = row(compare([rec("b", {"made_up": 1.0})], [rec("c", {"made_up": 100.0})]), "made_up")
         self.assertFalse(r["regression"])
