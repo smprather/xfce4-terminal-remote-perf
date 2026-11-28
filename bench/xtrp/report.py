@@ -31,8 +31,9 @@ METRIC_DIRECTION.update({
     "frames": 1,                 # fullscreen-redraw frames written in its fixed time: more = kept up
     "vnc_copyrect_area": 0,      # more CopyRect is the goal of scroll-by-copy, not a regression
     "elapsed_s": 0, "drain_s": 0, "vnc_rects": 0, "vnc_updates": 0, "damage_events": 0,
-    # Launch time is bimodal (about 1 in 4 launches lands ~40 ms later, whatever the build), so a
-    # median of a few samples cannot hold 5%; startup is not a goal of this project either.
+    # Launch time is bimodal (two clusters ~5 ms apart without mutter) or wide (106-306 ms with mutter
+    # on Xvnc), whatever the build, so a median of a few samples cannot hold 5%; startup is not a goal
+    # of this project either.
     # startup_x11_replies (deterministic, matters over a remote X link) stays gated.
     "startup_ms": 0,
     "failed_runs": -1, "drain_timeouts": -1,     # health rows: any increase in the candidate regresses
